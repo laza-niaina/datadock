@@ -1,0 +1,26 @@
+# Build output
+dist/
+out/
+*.vsix
+
+# Dependencies
+node_modules/
+
+# Test / coverage
+.vscode-test/
+coverage/
+.nyc_output/
+
+# Local environment / secrets (NEVER commit real credentials)
+.env
+.env.*
+*.local.json
+.local/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db

@@ -1,0 +1,23 @@
+# Sources and build tooling are not shipped: dist/ is a single bundled file.
+.vscode/**
+.vscode-test/**
+src/**
+test/**
+.internal/**
+.gitignore
+.vscodeignore
+eslint.config.mjs
+esbuild.js
+tsconfig.json
+
+# TypeScript sources and source maps
+**/*.ts
+**/*.map
+
+# node_modules is NOT shipped: esbuild bundles every runtime dependency
+# into dist/extension.js. Runtime assets that must stay on disk are copied
+# into dist/ by esbuild.js and therefore kept by the negation rule below.
+node_modules/**
+!dist/**
+
+# Docs kept in the VSIX on purpose: README.md, CHANGELOG.md, LICENSE

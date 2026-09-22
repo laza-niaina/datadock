@@ -1,0 +1,266 @@
+{
+  "name": "database-client-free",
+  "displayName": "Database Client (Free)",
+  "description": "Database client for VS Code: explore, query and edit MySQL, MariaDB, PostgreSQL and SQLite databases. Every feature is free, with no account, no telemetry and no connection limit.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "publisher": "dbclient",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other", "Programming Languages", "Data Science"],
+  "keywords": ["sql", "mysql", "mariadb", "postgresql", "sqlite", "database", "sql client"],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "check-types": "tsc --noEmit",
+    "compile": "npm run check-types && node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "npm run check-types && node esbuild.js --production",
+    "lint": "eslint src test",
+    "pretest": "npm run compile-tests",
+    "compile-tests": "tsc -p tsconfig.test.json",
+    "test:unit": "node --test out/test/unit/"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.0",
+    "@types/vscode": "1.85.0",
+    "esbuild": "^0.24.2",
+    "eslint": "^9.17.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.0"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dbclient",
+          "title": "Database Client",
+          "icon": "resources/dbclient.svg"
+        }
+      ]
+    },
+    "views": {
+      "dbclient": [
+        {
+          "id": "dbclient.explorer",
+          "name": "Connections",
+          "contextualTitle": "Database Client"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "dbclient.explorer",
+        "contents": "No database connections yet.\n[Add Connection](command:dbclient.connection.add)\n\nConnections are limited only by your machine and the database server. There is no account, no quota and no premium tier."
+      }
+    ],
+    "commands": [
+      {
+        "command": "dbclient.connection.add",
+        "title": "Add Connection",
+        "category": "Database Client",
+        "icon": "$(add)"
+      },
+      {
+        "command": "dbclient.connection.edit",
+        "title": "Edit Connection",
+        "category": "Database Client",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "dbclient.connection.duplicate",
+        "title": "Duplicate Connection",
+        "category": "Database Client",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "dbclient.connection.delete",
+        "title": "Delete Connection",
+        "category": "Database Client",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "dbclient.connection.connect",
+        "title": "Connect",
+        "category": "Database Client",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "dbclient.connection.disconnect",
+        "title": "Disconnect",
+        "category": "Database Client",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "dbclient.connection.reconnect",
+        "title": "Reconnect",
+        "category": "Database Client",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "dbclient.connection.copyName",
+        "title": "Copy Connection Name",
+        "category": "Database Client"
+      },
+      {
+        "command": "dbclient.explorer.refresh",
+        "title": "Refresh",
+        "category": "Database Client",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "dbclient.explorer.showOutput",
+        "title": "Show Output Log",
+        "category": "Database Client",
+        "icon": "$(output)"
+      },
+      {
+        "command": "dbclient.explorer.clearCache",
+        "title": "Clear Metadata Cache",
+        "category": "Database Client",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "dbclient.node.copyName",
+        "title": "Copy Name",
+        "category": "Database Client",
+        "icon": "$(clippy)"
+      },
+      {
+        "command": "dbclient.node.refresh",
+        "title": "Refresh",
+        "category": "Database Client",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "dbclient.connection.add",
+          "when": "view == dbclient.explorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dbclient.explorer.refresh",
+          "when": "view == dbclient.explorer",
+          "group": "navigation@2"
+        },
+        {
+          "command": "dbclient.explorer.clearCache",
+          "when": "view == dbclient.explorer",
+          "group": "2_configuration@1"
+        },
+        {
+          "command": "dbclient.explorer.showOutput",
+          "when": "view == dbclient.explorer",
+          "group": "2_configuration@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "dbclient.connection.connect",
+          "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.connection\\.(disconnected|error)$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "dbclient.connection.disconnect",
+          "when": "view == dbclient.explorer && viewItem == dbclient.connection.connected",
+          "group": "inline@1"
+        },
+        {
+          "command": "dbclient.node.refresh",
+          "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.(connection\\.connected|database|schema|folder|table|view)$/",
+          "group": "inline@2"
+        },
+        {
+          "command": "dbclient.connection.edit",
+          "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.connection\\./",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "dbclient.connection.duplicate",
+          "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.connection\\./",
+          "group": "1_modification@2"
+        },
+        {
+          "command": "dbclient.connection.reconnect",
+          "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.connection\\.(connected|error)$/",
+          "group": "1_modification@3"
+        },
+        {
+          "command": "dbclient.connection.delete",
+          "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.connection\\./",
+          "group": "1_modification@4"
+        },
+        {
+          "command": "dbclient.connection.copyName",
+          "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.connection\\./",
+          "group": "2_copy@1"
+        },
+        {
+          "command": "dbclient.node.copyName",
+          "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.(database|schema|folder|table|view|column|routine)$/",
+          "group": "2_copy@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "dbclient.connection.edit",
+          "when": "false"
+        },
+        {
+          "command": "dbclient.connection.delete",
+          "when": "false"
+        },
+        {
+          "command": "dbclient.connection.duplicate",
+          "when": "false"
+        },
+        {
+          "command": "dbclient.connection.connect",
+          "when": "false"
+        },
+        {
+          "command": "dbclient.connection.disconnect",
+          "when": "false"
+        },
+        {
+          "command": "dbclient.connection.reconnect",
+          "when": "false"
+        },
+        {
+          "command": "dbclient.connection.copyName",
+          "when": "false"
+        },
+        {
+          "command": "dbclient.node.copyName",
+          "when": "false"
+        },
+        {
+          "command": "dbclient.node.refresh",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Database Client",
+      "properties": {
+        "dbclient.metadata.cacheTtlSeconds": {
+          "type": "number",
+          "default": 300,
+          "minimum": 0,
+          "markdownDescription": "How long database metadata (databases, schemas, tables, columns) is kept in memory, in seconds. Set to `0` to keep entries until the explorer is refreshed manually. This cache only ever avoids redundant queries; it never hides a change made with **Refresh**."
+        },
+        "dbclient.log.level": {
+          "type": "string",
+          "enum": ["error", "warn", "info", "debug", "trace"],
+          "default": "info",
+          "description": "Verbosity of the Database Client output channel. Passwords and private keys are never written to the log regardless of this setting."
+        }
+      }
+    }
+  }
+}
