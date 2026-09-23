@@ -8,8 +8,20 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other", "Programming Languages", "Data Science"],
-  "keywords": ["sql", "mysql", "mariadb", "postgresql", "sqlite", "database", "sql client"],
+  "categories": [
+    "Other",
+    "Programming Languages",
+    "Data Science"
+  ],
+  "keywords": [
+    "sql",
+    "mysql",
+    "mariadb",
+    "postgresql",
+    "sqlite",
+    "database",
+    "sql client"
+  ],
   "main": "./dist/extension.js",
   "activationEvents": [],
   "scripts": {
@@ -256,11 +268,21 @@
         },
         "dbclient.log.level": {
           "type": "string",
-          "enum": ["error", "warn", "info", "debug", "trace"],
+          "enum": [
+            "error",
+            "warn",
+            "info",
+            "debug",
+            "trace"
+          ],
           "default": "info",
           "description": "Verbosity of the Database Client output channel. Passwords and private keys are never written to the log regardless of this setting."
         }
       }
     }
+  },
+  "dependencies": {
+    "mysql2": "^3.24.4",
+    "sql.js": "^1.14.2"
   }
 }

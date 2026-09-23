@@ -29,6 +29,7 @@ import type {
 } from '../db/types';
 import { Emitter, type Event } from '../util/emitter';
 import { globalRedactor, type Redactor } from '../util/redaction';
+import { resolveAssetsDir } from '../db/drivers/assets';
 
 export type SessionState = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -67,6 +68,12 @@ export interface ConnectionManagerOptions {
   redactor?: Redactor;
   /** SSH tunnel factory; absent while the SSH service is not implemented. */
   openTunnel?: TunnelOpener;
+  /**
+   * Directory holding runtime assets that cannot be bundled (currently
+   * `sql-wasm.wasm`). Defaults to the bundle directory (`__dirname` of the
+   * compiled extension), which is where `esbuild.js` copies them.
+   */
+  assetsDir?: string;
 }
 
 interface Session {
@@ -83,6 +90,7 @@ export class ConnectionManager {
   private readonly changed = new Emitter<SessionStatus>();
   private readonly logger: Logger;
   private readonly redactor: Redactor;
+  private readonly assetsDir: string;
 
   /** Fires whenever a session changes state. */
   readonly onDidChange: Event<SessionStatus> = this.changed.event;
@@ -90,6 +98,7 @@ export class ConnectionManager {
   constructor(private readonly options: ConnectionManagerOptions) {
     this.logger = options.logger ?? NULL_LOGGER;
     this.redactor = options.redactor ?? globalRedactor;
+    this.assetsDir = resolveAssetsDir(options.assetsDir);
   }
 
   // -- status --------------------------------------------------------------
@@ -188,7 +197,7 @@ export class ConnectionManager {
         session.tunnel = effective.tunnel;
       }
 
-      const driver = factory.create(effective.config, { logger: this.logger });
+      const driver = factory.create(effective.config, { logger: this.logger, assetsDir: this.assetsDir });
       try {
         await driver.connect(token);
       } catch (connectError) {
@@ -318,7 +327,7 @@ export class ConnectionManager {
       const effective = await this.resolveTunnel(config, token);
       tunnel = effective.tunnel;
 
-      driver = factory.create(effective.config, { logger: this.logger });
+      driver = factory.create(effective.config, { logger: this.logger, assetsDir: this.assetsDir });
       await driver.connect(token);
       const pingMs = await driver.ping(token).catch(() => Date.now() - started);
 

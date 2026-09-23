@@ -15,15 +15,21 @@ const watch = process.argv.includes('--watch');
 /**
  * Files that must exist on disk at runtime, relative to the project root.
  * `{ from, to }` pairs, `to` being relative to the project root too.
+ * A `required` asset aborts the build when its source is missing, so a
+ * forgotten `npm install` can never produce a silently broken bundle.
  */
 const RUNTIME_ASSETS = [
-  { from: 'node_modules/sql.js/dist/sql-wasm.wasm', to: 'dist/sql-wasm.wasm' },
+  { from: 'node_modules/sql.js/dist/sql-wasm.wasm', to: 'dist/sql-wasm.wasm', required: true },
 ];
 
 function copyRuntimeAssets() {
   for (const asset of RUNTIME_ASSETS) {
     if (!fs.existsSync(asset.from)) {
-      // Optional: the driver that needs it may not be installed yet.
+      if (asset.required) {
+        throw new Error(
+          `Required runtime asset '${asset.from}' is missing. Run 'npm install' before building.`,
+        );
+      }
       continue;
     }
     fs.mkdirSync(path.dirname(asset.to), { recursive: true });

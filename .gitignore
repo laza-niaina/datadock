@@ -24,3 +24,5 @@ npm-debug.log*
 # Editor / OS noise
 .DS_Store
 Thumbs.db
+
+.internal/

@@ -15,6 +15,7 @@ import { ConnectionManager } from './connections/connectionManager';
 import { ConnectionStore } from './connections/connectionStore';
 import { OutputLogger, toLogLevel } from './core/logger';
 import { driverRegistry } from './db/driverRegistry';
+import { registerBuiltinDrivers } from './db/drivers';
 import type { SessionStatus } from './connections/connectionManager';
 import { DatabaseExplorerProvider } from './explorer/databaseExplorerProvider';
 import { ConnectionNode } from './explorer/nodes';
@@ -28,6 +29,11 @@ export function activate(context: vscode.ExtensionContext): void {
   const logger = new OutputLogger(globalRedactor);
   const configuration = vscode.workspace.getConfiguration('dbclient');
   logger.setLevel(toLogLevel(configuration.get<string>('log.level')));
+
+  // Registers MySQL, MariaDB and SQLite. Must run before any registry read:
+  // the wizard, the explorer and the connection manager all derive their
+  // behaviour from what is registered here.
+  registerBuiltinDrivers(driverRegistry);
 
   const engines = driverRegistry.all().map((factory) => factory.engine);
   logger.info(`Database Client activating. VS Code ${vscode.version}.`, {
@@ -44,7 +50,13 @@ export function activate(context: vscode.ExtensionContext): void {
     ttlMs: Math.max(0, configuration.get<number>('metadata.cacheTtlSeconds') ?? 300) * 1000,
   });
   const store = new ConnectionStore(context.globalState, context.secrets, logger, globalRedactor);
-  const manager = new ConnectionManager({ registry: driverRegistry, logger, redactor: globalRedactor });
+  const manager = new ConnectionManager({
+    registry: driverRegistry,
+    logger,
+    redactor: globalRedactor,
+    // sql-wasm.wasm and any future non-bundleable runtime asset live here.
+    assetsDir: __dirname,
+  });
   activeManager = manager;
 
   const provider = new DatabaseExplorerProvider({

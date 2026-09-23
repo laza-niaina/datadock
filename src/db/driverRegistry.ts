@@ -19,6 +19,12 @@ import type {
 
 export interface DriverDeps {
   readonly logger: Logger;
+  /**
+   * Directory holding runtime assets that cannot be bundled (currently
+   * `sql-wasm.wasm`). Always filled in by `ConnectionManager`; drivers fall
+   * back to the bundle directory when a caller constructs deps by hand.
+   */
+  readonly assetsDir?: string;
 }
 
 export interface DriverFactory {
