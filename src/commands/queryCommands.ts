@@ -97,45 +97,103 @@ async function pickProfile(services: CommandServices, title: string): Promise<Co
 }
 
 /**
+ * Guarantees a run target has an active database before a batch executes, so a
+ * MySQL/MariaDB connection without a default database never fails with the raw
+ * server error "No database selected".
+ *
+ * The effective database is the file override, else the profile default. When
+ * neither exists on a multi-database engine, the user is asked to pick one; the
+ * choice is remembered for the file (`fileUri`) and the returned override
+ * makes `runStatements` inject a `USE` statement for the batch.
+ */
+export interface RunDatabaseResolution {
+  /** True when the batch must be aborted (no database could be chosen). */
+  readonly aborted: boolean;
+  /** Override to hand to `runStatements`; undefined keeps the profile default. */
+  readonly override: string | undefined;
+}
+
+async function ensureRunDatabase(
+  target: QueryTarget,
+  fileUri: vscode.Uri | undefined,
+  override: string | undefined,
+): Promise<RunDatabaseResolution> {
+  if (!target.driver.capabilities.multipleDatabases) {
+    // SQLite: the file IS the database; no USE can or should be injected.
+    return { aborted: false, override: undefined };
+  }
+  const effective = override ?? target.profile.database;
+  if (typeof effective === 'string' && effective.length > 0) {
+    return { aborted: false, override };
+  }
+  let databases: string[];
+  try {
+    databases = await target.driver.listDatabases();
+  } catch (error) {
+    catchTargetError(error);
+    return { aborted: true, override: undefined };
+  }
+  const picked = await vscode.window.showQuickPick(
+    databases.map((database) => ({ label: database, database })),
+    {
+      title: 'DataDock: database for this SQL file',
+      placeHolder: 'This connection has no default database. Pick one to run against.',
+    },
+  );
+  if (!picked) {
+    void vscode.window.showInformationMessage('Query cancelled: no database selected for this run.');
+    return { aborted: true, override: undefined };
+  }
+  if (fileUri) {
+    await sqlFileAssociations().setDatabase(fileUri, picked.database);
+  }
+  return { aborted: false, override: picked.database };
+}
+
+/**
  * Resolves the connection for an editor: an explicit tree node wins, then the
  * remembered per-file association, otherwise a QuickPick that is persisted so
- * later runs on the same file need no question.
+ * later runs on the same file need no question. Finally guarantees the target
+ * has an active database (asking the user when none is configured).
  */
 async function pickTargetForDocument(
   services: CommandServices,
   editor: vscode.TextEditor,
   node?: unknown,
 ): Promise<QueryTarget | undefined> {
-  const directId = connectionIdOf(node);
-  if (directId) {
-    const profile = await services.store.get(directId);
-    if (profile) {
-      return ensureDriver(services, profile);
-    }
-  }
-
   const state = sqlFileAssociations();
   const uri = editor.document.uri;
-  const association = state.getAssociation(uri);
-  if (association) {
-    const profile = await services.store.get(association.connectionId);
-    if (profile) {
-      const target = await ensureDriver(services, profile);
-      return { ...target, database: association.database };
+
+  let override: string | undefined;
+  let profile: ConnectionProfile | undefined;
+
+  const directId = connectionIdOf(node);
+  if (directId) {
+    profile = await services.store.get(directId);
+  } else {
+    const association = state.getAssociation(uri);
+    if (association) {
+      override = association.database;
+      profile = await services.store.get(association.connectionId);
     }
-    // The association points at a deleted profile; let the picker replace it.
   }
 
-  const profile = await pickProfile(services, 'Select a DataDock connection for this SQL file');
   if (!profile) {
+    profile = await pickProfile(services, 'Select a DataDock connection for this SQL file');
+    if (!profile) {
+      return undefined;
+    }
+    await state.set(uri, profile.id);
+    void vscode.window.setStatusBarMessage(`DataDock: this SQL file will use '${profile.name}'.`, 4000);
+  }
+
+  const target = await ensureDriver(services, profile);
+  const fileScoped = connectionIdOf(node) === undefined;
+  const resolution = await ensureRunDatabase(target, fileScoped ? uri : undefined, override);
+  if (resolution.aborted) {
     return undefined;
   }
-  await state.set(uri, profile.id);
-  void vscode.window.setStatusBarMessage(
-    `DataDock: this SQL file will use '${profile.name}'.`,
-    4000,
-  );
-  return ensureDriver(services, profile);
+  return { ...target, database: resolution.override };
 }
 
 function catchTargetError(error: unknown): void {
@@ -467,10 +525,14 @@ export function registerQueryCommands(register: Register, services: CommandServi
       return;
     }
     const state = sqlFileAssociations();
-    const association = state.getAssociation(activeUri);
+    let association = state.getAssociation(activeUri);
     if (!association) {
-      void vscode.window.showInformationMessage('Select a DataDock connection for this SQL file first.');
-      return;
+      const picked = await pickProfile(services, 'Select a DataDock connection for this SQL file');
+      if (!picked) {
+        return;
+      }
+      await state.set(activeUri, picked.id);
+      association = { connectionId: picked.id, database: undefined };
     }
     const profile = await services.store.get(association.connectionId);
     if (!profile) {
@@ -490,7 +552,13 @@ export function registerQueryCommands(register: Register, services: CommandServi
       );
       return;
     }
-    const databases = await target.driver.listDatabases();
+    let databases: string[];
+    try {
+      databases = await target.driver.listDatabases();
+    } catch (error) {
+      catchTargetError(error);
+      return;
+    }
     const current = association.database ?? profile.database;
     const picked = await vscode.window.showQuickPick(
       databases.map((database) => ({
