@@ -6,7 +6,7 @@
  * extension host lives here so `node --test` can lock the behaviour.
  */
 
-import { engineIcon, engineLabel } from '../util/engineDisplay';
+import { sqlStatusLabels } from '../util/engineDisplay';
 import type { EngineId } from '../db/types';
 
 /** Connection facts a block lens renders, when the file is associated. */
@@ -55,6 +55,11 @@ export function buildBlockLensDescriptors(
   info: SqlBlockLensInfo,
   options: SqlBlockLensOptions,
 ): SqlBlockLensDescriptor[] {
+  const labels = sqlStatusLabels({
+    connectionName: info.connectionName,
+    engine: info.engine,
+    database: info.database,
+  });
   const descriptors: SqlBlockLensDescriptor[] = [];
   for (const block of blocks) {
     descriptors.push(
@@ -72,16 +77,15 @@ export function buildBlockLensDescriptors(
       },
       {
         line: block.line,
-        title: info.connectionName ? `$(database) ${info.connectionName}` : '$(database) Connect',
+        title: labels.connection,
         command: 'dbclient.query.selectConnection',
         arguments: [options.uri],
       },
     );
-    if (info.connectionName && info.engine) {
-      const database = info.database ? `: ${info.database}` : '';
+    if (labels.database) {
       descriptors.push({
         line: block.line,
-        title: `${engineIcon(info.engine)} ${engineLabel(info.engine)}${database}`,
+        title: labels.database,
         command: 'dbclient.query.selectDatabase',
         arguments: [options.uri],
       });

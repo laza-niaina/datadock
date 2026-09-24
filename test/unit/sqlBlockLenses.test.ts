@@ -23,17 +23,17 @@ describe('SQL block CodeLens descriptors', () => {
     const second = descriptors[1];
     assert.deepEqual(second.arguments, ['file:///app/seed.sql', 0, 9]);
     assert.equal(second.command, 'dbclient.query.runStatement');
-    assert.equal(descriptors[2].title, '$(database) Local MariaDB');
+    assert.equal(descriptors[2].title, '$(database) : Local MariaDB');
     assert.equal(descriptors[2].command, 'dbclient.query.selectConnection');
     assert.deepEqual(descriptors[2].arguments, ['file:///app/seed.sql']);
     const info = descriptors[3];
     assert.equal(info.line, 0);
-    assert.equal(info.title, '$(server) MariaDB: restaurant');
+    assert.equal(info.title, '$(server) MariaDB : restaurant');
     assert.equal(info.command, 'dbclient.query.selectDatabase');
     assert.deepEqual(info.arguments, ['file:///app/seed.sql']);
     // Second block reuses the same facts on its own line.
     assert.equal(descriptors[4].line, 4);
-    assert.equal(descriptors[7].title, '$(server) MariaDB: restaurant');
+    assert.equal(descriptors[7].title, '$(server) MariaDB : restaurant');
   });
 
   it('shows "Connect" and hides the database lens when there is no connection', () => {
@@ -45,13 +45,13 @@ describe('SQL block CodeLens descriptors', () => {
     assert.ok(!descriptors.some((descriptor) => descriptor.command === 'dbclient.query.selectDatabase'));
   });
 
-  it('renders an engine / database lens even without a database override', () => {
+  it('renders an engine / database lens with a Select DB placeholder when missing', () => {
     const descriptors = buildBlockLensDescriptors(
       [{ line: 2, start: 10, end: 20 }],
       { connectionName: 'Local MySQL', engine: 'mysql' },
       { uri: 'file:///app/seed.sql' },
     );
-    assert.equal(descriptors[3].title, '$(server) MySQL');
+    assert.equal(descriptors[3].title, '$(server) MySQL : Select DB');
   });
 
   it('returns nothing for an empty document', () => {

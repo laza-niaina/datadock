@@ -38,3 +38,39 @@ export function engineIcon(engine: EngineId): string {
       return '$(database)';
   }
 }
+
+/** Facts the status bar / CodeLens need to render one SQL file context. */
+export interface SqlStatusContext {
+  /** Profile name shown next to the database icon; absent means "Connect". */
+  readonly connectionName?: string;
+  readonly engine?: EngineId;
+  /** Effective active database for the file; absent renders "Select DB". */
+  readonly database?: string;
+}
+
+/**
+ * The two label parts of the per-file SQL context, rendered as one visual
+ * unit: `[DB] : Connection [engine] : Database`. The connection item doubles
+ * as the entry point "Connect" before the file has been configured.
+ */
+export interface SqlStatusLabels {
+  /** Connection item: `$(database) Connect` or `$(database) : <name>`. */
+  readonly connection: string;
+  /** Engine + database item; absent until a connection is known. */
+  readonly database?: string;
+}
+
+/** Builds the exact status bar / CodeLens label parts for a SQL file. */
+export function sqlStatusLabels(context: SqlStatusContext): SqlStatusLabels {
+  if (!context.connectionName) {
+    return { connection: '$(database) Connect' };
+  }
+  const connection = `$(database) : ${context.connectionName}`;
+  if (!context.engine) {
+    return { connection };
+  }
+  return {
+    connection,
+    database: `${engineIcon(context.engine)} ${engineLabel(context.engine)} : ${context.database ?? 'Select DB'}`,
+  };
+}
