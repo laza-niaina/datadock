@@ -3,7 +3,7 @@
  *
  * The registry refuses to register the same engine twice, so the shared
  * `MySqlDriver` implementation is exposed through two distinct factory objects
- * built by one parametric function — the two engines differ only in label,
+ * built by one parametric function - the two engines differ only in label,
  * capabilities (`backupTool`) and the engine id the driver reports.
  */
 

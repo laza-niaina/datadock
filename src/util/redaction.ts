@@ -5,10 +5,10 @@
  * webview must pass through a `Redactor` first. Two complementary strategies
  * are used:
  *
- *  1. **Known-value redaction** — passwords actually typed by the user are
+ *  1. **Known-value redaction** - passwords actually typed by the user are
  *     registered and replaced verbatim wherever they appear, including inside
  *     driver error messages.
- *  2. **Pattern redaction** — credential-shaped substrings (URI userinfo,
+ *  2. **Pattern redaction** - credential-shaped substrings (URI userinfo,
  *     `password=`, SQL `IDENTIFIED BY`, `Authorization:` headers, PEM blocks)
  *     are masked even when the value was never registered, e.g. because it
  *     came from a connection string embedded in user SQL.
@@ -33,7 +33,7 @@ const PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/(\bIDENTIFIED\s+BY\s+)(["'])([\s\S]*?)\2/gi, `$1$2${MASK}$2`],
   // SQL: ... PASSWORD 'secret'
   [/(\bPASSWORD\s+)(["'])([\s\S]*?)\2/gi, `$1$2${MASK}$2`],
-  // HTTP style header — the scheme (Bearer, Basic…) carries no secret but is
+  // HTTP style header - the scheme (Bearer, Basic…) carries no secret but is
   // masked too: over-masking is safe, under-masking is not.
   [/(\bAuthorization\s*:\s*)\S[^\n]*/gi, `$1${MASK}`],
   // libpq / mysql style URI parameters

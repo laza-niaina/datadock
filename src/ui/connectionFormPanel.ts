@@ -113,7 +113,7 @@ export class ConnectionFormPanel {
 
     const panel = vscode.window.createWebviewPanel(
       PANEL_VIEW_TYPE,
-      mode === 'create' ? `New Connection — ${baseProfile.engine}` : `Edit Connection — ${baseProfile.name}`,
+      mode === 'create' ? `New Connection - ${baseProfile.engine}` : `Edit Connection - ${baseProfile.name}`,
       vscode.ViewColumn.Active,
       { enableScripts: true, retainContextWhenHidden: false, localResourceRoots: [] },
     );
@@ -228,7 +228,7 @@ export class ConnectionFormPanel {
       this.options.manager.refreshProfile(saved);
       await this.options.onSaved?.(saved);
 
-      this.panel.title = `Edit Connection — ${saved.name}`;
+      this.panel.title = `Edit Connection - ${saved.name}`;
       this.options.logger.info(`Connection '${saved.name}' saved from the connection form.`, { id: saved.id });
       await this.post({ type: 'testResult', ok: true, message: `Saved '${saved.name}'.` });
       // The stored secrets may now exist, so the hints must be refreshed.

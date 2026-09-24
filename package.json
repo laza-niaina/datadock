@@ -117,6 +117,54 @@
         "category": "DataDock"
       },
       {
+        "command": "dbclient.query.open",
+        "title": "Open SQL Editor",
+        "category": "DataDock",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "dbclient.query.execute",
+        "title": "Run SQL",
+        "category": "DataDock",
+        "icon": "$(run)"
+      },
+      {
+        "command": "dbclient.query.runSelection",
+        "title": "Run Selected Query",
+        "category": "DataDock",
+        "icon": "$(play)"
+      },
+      {
+        "command": "dbclient.query.runAll",
+        "title": "Run All Queries",
+        "category": "DataDock",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "dbclient.query.selectConnection",
+        "title": "Select Connection for SQL File",
+        "category": "DataDock",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "dbclient.query.selectDatabase",
+        "title": "Select Database for SQL File",
+        "category": "DataDock",
+        "icon": "$(database)"
+      },
+      {
+        "command": "dbclient.query.runStatement",
+        "title": "Run This Query",
+        "category": "DataDock",
+        "icon": "$(play)"
+      },
+      {
+        "command": "dbclient.table.view",
+        "title": "View Table Data",
+        "category": "DataDock",
+        "icon": "$(table)"
+      },
+      {
         "command": "dbclient.explorer.refresh",
         "title": "Refresh",
         "category": "DataDock",
@@ -160,6 +208,11 @@
           "group": "navigation@2"
         },
         {
+          "command": "dbclient.query.open",
+          "when": "view == dbclient.explorer",
+          "group": "navigation@3"
+        },
+        {
           "command": "dbclient.explorer.clearCache",
           "when": "view == dbclient.explorer",
           "group": "2_configuration@1"
@@ -185,6 +238,11 @@
           "command": "dbclient.node.refresh",
           "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.(connection\\.connected|database|schema|folder|table|view)$/",
           "group": "inline@2"
+        },
+        {
+          "command": "dbclient.table.view",
+          "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.(table|view)$/",
+          "group": "inline@3"
         },
         {
           "command": "dbclient.connection.edit",
@@ -215,6 +273,40 @@
           "command": "dbclient.node.copyName",
           "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.(database|schema|folder|table|view|column|routine)$/",
           "group": "2_copy@1"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "dbclient.query.runSelection",
+          "when": "editorLangId == sql && editorTextFocus",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dbclient.query.runAll",
+          "when": "editorLangId == sql && editorTextFocus",
+          "group": "navigation@2"
+        },
+        {
+          "command": "dbclient.query.selectConnection",
+          "when": "editorLangId == sql",
+          "group": "2_connection@1"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "dbclient.query.runSelection",
+          "when": "editorLangId == sql && editorTextFocus",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dbclient.query.runAll",
+          "when": "editorLangId == sql && editorTextFocus",
+          "group": "navigation@2"
+        },
+        {
+          "command": "dbclient.query.selectConnection",
+          "when": "editorLangId == sql",
+          "group": "2_connection@1"
         }
       ],
       "commandPalette": [
@@ -253,9 +345,45 @@
         {
           "command": "dbclient.node.refresh",
           "when": "false"
+        },
+        {
+          "command": "dbclient.query.execute",
+          "when": "editorLangId == sql"
+        },
+        {
+          "command": "dbclient.query.runSelection",
+          "when": "editorLangId == sql"
+        },
+        {
+          "command": "dbclient.query.runAll",
+          "when": "editorLangId == sql"
+        },
+        {
+          "command": "dbclient.query.selectConnection",
+          "when": "editorLangId == sql"
+        },
+        {
+          "command": "dbclient.query.selectDatabase",
+          "when": "editorLangId == sql"
+        },
+        {
+          "command": "dbclient.query.runStatement",
+          "when": "false"
         }
       ]
     },
+    "keybindings": [
+      {
+        "command": "dbclient.query.runSelection",
+        "key": "ctrl+enter",
+        "when": "editorLangId == sql && editorTextFocus"
+      },
+      {
+        "command": "dbclient.query.runAll",
+        "key": "ctrl+shift+enter",
+        "when": "editorLangId == sql && editorTextFocus"
+      }
+    ],
     "configuration": {
       "title": "DataDock",
       "properties": {

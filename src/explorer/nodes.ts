@@ -392,9 +392,11 @@ export class RelationNode extends ExplorerNode {
       const tooltip = new vscode.MarkdownString(`**${ref.table}**\n\n${comment}`);
       this.tooltip = tooltip;
     }
-    // NOTE: deliberately no `command` here yet. Clicking the row to open the
-    // data viewer is wired in the table-viewer milestone; referencing a command
-    // id that is not registered would make VS Code raise an error on click.
+    this.command = {
+      command: 'dbclient.table.view',
+      title: 'View Table Data',
+      arguments: [this],
+    };
   }
 
   override async getChildren(services: ExplorerServices): Promise<ExplorerNode[]> {

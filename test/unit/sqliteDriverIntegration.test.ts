@@ -10,7 +10,7 @@ import { NULL_LOGGER } from '../../src/db/types';
 import type { ConnectionConfig, ConnectionProfile } from '../../src/db/types';
 
 /**
- * The only test that runs the real WASM engine — against a temporary file, so
+ * The only test that runs the real WASM engine - against a temporary file, so
  * no server and no fixture repository is needed. It uses the sql.js asset
  * shipped in node_modules (the same file `esbuild.js` copies to dist/), and
  * skips itself when that file is absent.
@@ -57,6 +57,7 @@ describe('SqliteDriver (integration)', { skip: !wasmAvailable && 'sql-wasm.wasm 
       // AUTOINCREMENT on purpose: it creates sqlite_sequence, which the catalog
       // query must hide.
       database.run('CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, age INTEGER DEFAULT 0)');
+      database.run("INSERT INTO users (name, age) VALUES ('Ada', 36), ('Bob', 24)");
       database.run('CREATE VIEW v_users AS SELECT id, name FROM users');
       writeFileSync(dbFile, Buffer.from(database.export()));
     } finally {
@@ -129,12 +130,37 @@ describe('SqliteDriver (integration)', { skip: !wasmAvailable && 'sql-wasm.wasm 
     await driver.disconnect();
   });
 
-  it('rejects execute and getTableData with UNSUPPORTED_OPERATION', async () => {
+  it('executes read-only SQL and pages table data', async () => {
     const driver = newDriver(dbFile);
     await driver.connect();
-    await assert.rejects(driver.execute('SELECT 1'), isDbErrorCode('UNSUPPORTED_OPERATION'));
+
+    const result = await driver.execute("SELECT 1 AS answer UNION ALL SELECT 2");
+    assert.equal(result.results.length, 1);
+    assert.deepEqual(result.results[0].fields, [{ name: 'answer' }]);
+    assert.deepEqual(result.results[0].rows, [[1], [2]]);
+    assert.equal(result.results[0].isMutation, false);
+
+    const page = await driver.getTableData(TABLE_REF, {
+      offset: 0,
+      limit: 1,
+      sort: [{ column: 'name', direction: 'desc' }],
+    });
+    assert.equal(page.totalRows, 2);
+    assert.equal(page.rows.length, 1);
+    assert.deepEqual(page.rows[0], [2, 'Bob', 24]);
+    assert.deepEqual(page.primaryKey, ['id']);
+    assert.equal(page.editable, false);
+
+    const searched = await driver.getTableData(TABLE_REF, { offset: 0, limit: 10, search: 'da' });
+    assert.equal(searched.totalRows, 1);
+    assert.deepEqual(searched.rows[0], [1, 'Ada', 36]);
+
     await assert.rejects(
-      driver.getTableData(TABLE_REF, { offset: 0, limit: 50 }),
+      driver.execute("INSERT INTO users (name) VALUES ('Mutated')"),
+      isDbErrorCode('UNSUPPORTED_OPERATION'),
+    );
+    await assert.rejects(
+      driver.execute("SELECT 1; DELETE FROM users"),
       isDbErrorCode('UNSUPPORTED_OPERATION'),
     );
     await driver.disconnect();

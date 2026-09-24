@@ -10,6 +10,7 @@
  */
 
 import * as vscode from 'vscode';
+import { basename } from 'node:path';
 import { registerCommands, type CommandServices } from './commands';
 import { ConnectionManager } from './connections/connectionManager';
 import { ConnectionStore } from './connections/connectionStore';
@@ -20,6 +21,9 @@ import type { SessionStatus } from './connections/connectionManager';
 import { DatabaseExplorerProvider } from './explorer/databaseExplorerProvider';
 import { ConnectionNode } from './explorer/nodes';
 import { MetadataCache } from './metadata/metadataCache';
+import { initSqlFileAssociations } from './sql/sqlFileState';
+import { SqlBlockCodeLensProvider } from './sql/sqlCodeLens';
+import { engineIcon, engineLabel } from './util/engineDisplay';
 import { globalRedactor } from './util/redaction';
 
 /** Kept for `deactivate`, which must close every socket before VS Code exits. */
@@ -102,6 +106,98 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   registerCommands(context, services);
+
+  // Per-file SQL connection association: remembered in workspaceState so the
+  // SQL editor, the status bar and the CodeLens share one view, with nothing
+  // written into the .sql file itself.
+  const associations = initSqlFileAssociations(context.workspaceState);
+
+  // CodeLens action bar above each SQL block. The profile lookup is async, so
+  // the provider keeps a small cache it refreshes on editor/association change.
+  const sqlCodeLens = new SqlBlockCodeLensProvider(associations, async (id) => {
+    const profile = await store.get(id);
+    return profile
+      ? { name: profile.name, engine: profile.engine, database: profile.database }
+      : undefined;
+  });
+
+  // Status bar: one item for the connection (or "Connect"), one for the engine
+  // and the active database. Both only exist for the active .sql editor.
+  const sqlConnectionStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 62);
+  const sqlDatabaseStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 61);
+
+  const sqliteFilePath = (profile: { engine: string; options?: Record<string, unknown> }): string | undefined => {
+    const path = profile.options?.filePath;
+    return typeof path === 'string' ? path : undefined;
+  };
+
+  const refreshSqlStatus = async (): Promise<void> => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document.languageId !== 'sql') {
+      sqlConnectionStatus.hide();
+      sqlDatabaseStatus.hide();
+      return;
+    }
+    const uri = editor.document.uri;
+    const association = associations.getAssociation(uri);
+    const profile = association ? await store.get(association.connectionId) : undefined;
+    if (!profile) {
+      sqlConnectionStatus.text = '$(database) Connect';
+      sqlConnectionStatus.tooltip = 'Select a DataDock connection for this SQL file.';
+      sqlConnectionStatus.command = 'dbclient.query.selectConnection';
+      sqlConnectionStatus.show();
+      sqlDatabaseStatus.hide();
+      return;
+    }
+
+    sqlConnectionStatus.text = `$(database) ${profile.name}`;
+    sqlConnectionStatus.tooltip = 'DataDock connection used for this SQL file. Click to change it.';
+    sqlConnectionStatus.command = 'dbclient.query.selectConnection';
+    sqlConnectionStatus.show();
+
+    const engine = engineLabel(profile.engine);
+    const icon = engineIcon(profile.engine);
+    const database =
+      association?.database ??
+      (profile.engine === 'sqlite' ? basename(sqliteFilePath(profile) ?? '') || undefined : profile.database);
+    if (database) {
+      sqlDatabaseStatus.text = `${icon} ${engine}: ${database}`;
+      sqlDatabaseStatus.tooltip = 'Active database for this SQL file. Click to change it.';
+    } else {
+      sqlDatabaseStatus.text = `${icon} ${engine}: select database`;
+      sqlDatabaseStatus.tooltip = 'No database selected yet. Click to choose one.';
+    }
+    sqlDatabaseStatus.command = 'dbclient.query.selectDatabase';
+    sqlDatabaseStatus.show();
+  };
+
+  const refreshSqlLenses = (): void => {
+    const editor = vscode.window.activeTextEditor;
+    if (editor && editor.document.languageId === 'sql') {
+      void sqlCodeLens.refresh(editor.document.uri);
+    }
+  };
+
+  context.subscriptions.push(
+    sqlConnectionStatus,
+    sqlDatabaseStatus,
+    vscode.languages.registerCodeLensProvider({ language: 'sql' }, sqlCodeLens),
+    vscode.window.onDidChangeActiveTextEditor(() => {
+      void refreshSqlStatus();
+      refreshSqlLenses();
+    }),
+    vscode.window.onDidChangeTextEditorSelection(() => void refreshSqlStatus()),
+    associations.onDidChange((change) => {
+      void refreshSqlStatus();
+      void sqlCodeLens.refresh(vscode.Uri.parse(change.uri));
+    }),
+    store.onDidChange(() => {
+      void refreshSqlStatus();
+      sqlCodeLens.refreshAll();
+    }),
+  );
+  void refreshSqlStatus();
+  refreshSqlLenses();
 
   context.subscriptions.push(
     logger,

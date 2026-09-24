@@ -181,7 +181,7 @@ const FORM_BODY = `
     </div>
     <div class="check">
       <input type="checkbox" id="f-readOnly" data-draft="readOnly" />
-      <label for="f-readOnly">Read-only — refuse every write made through this connection</label>
+      <label for="f-readOnly">Read-only - refuse every write made through this connection</label>
     </div>
   </fieldset>
 
@@ -584,7 +584,7 @@ export function renderConnectionFormHtml(webview: vscode.Webview): string {
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DataDock — Connection</title>
+  <title>DataDock - Connection</title>
   <style nonce="${nonce}">${BASE_STYLES}</style>
 </head>
 <body>

@@ -1,13 +1,12 @@
 /**
- * Metadata-only MySQL / MariaDB driver on top of `mysql2/promise`.
+ * MySQL / MariaDB driver on top of `mysql2/promise`.
  *
- * Scope of this milestone: connect, ping, and browse databases, tables, views,
- * columns and routines. `execute()` and `getTableData()` exist because the
- * interface requires them, but throw `UNSUPPORTED_OPERATION` instead of
- * pretending to work.
+ * Scope of this milestone: connect, execute SQL, browse metadata, and read
+ * table data. Row editing and schema mutations through the table viewer stay
+ * disabled until their own persistence/identity milestone.
  */
 
-import { createConnection, type Connection } from 'mysql2/promise';
+import { createConnection, type Connection, type FieldPacket, type ResultSetHeader } from 'mysql2/promise';
 import { readFileSync } from 'node:fs';
 import { DbError } from '../../errors';
 import { NEVER_CANCELLED, NULL_LOGGER } from '../../types';
@@ -19,8 +18,12 @@ import type {
   DriverCapabilities,
   EngineId,
   Logger,
+  QueryExecutionResult,
+  QueryField,
+  QueryResultSet,
   RoutineInfo,
   SchemaRef,
+  TableDataPage,
   TableDataRequest,
   TableInfo,
   TableRef,
@@ -38,6 +41,11 @@ import {
 } from './mysqlCatalog';
 import { buildMysqlConnectionOptions } from './mysqlConnectionOptions';
 import { toMysqlError } from './mysqlErrors';
+import {
+  buildTableCountSql,
+  buildTableDataSql,
+  type TableDataSqlOptions,
+} from '../tableDataQuery';
 // Capabilities live in the driver, not in the factory: the factory imports this
 // module, so a module-scope read of a factory export here runs during the
 // circular evaluation and captures `undefined` in the esbuild bundle.
@@ -48,7 +56,7 @@ export const MYSQL_CAPABILITIES: DriverCapabilities = {
   multipleDatabases: true,
   views: true,
   routines: true,
-  // Metadata-only milestone: no statement execution and no table data yet.
+  // SQL execution and table reads are available; row editing is a later milestone.
   editableData: false,
   serverSidePagination: true,
   // COUNT(*) is a full InnoDB scan, so it must not be issued automatically.
@@ -71,6 +79,58 @@ const ENGINE_CAPABILITIES: Readonly<Record<'mysql' | 'mariadb', DriverCapabiliti
 
 /** The raw mysql2 connection exposes emitter events the promise wrapper hides. */
 type ErrorEmitter = { on(event: 'error', listener: (error: unknown) => void): unknown };
+
+const MAX_QUERY_ROWS = 10_000;
+
+/** MySQL identifiers are quoted with backticks; embedded backticks are doubled. */
+export function quoteMysqlIdentifier(name: string): string {
+  return `\`${name.replace(/`/g, '``')}\``;
+}
+
+function firstSqlKeyword(sql: string): string {
+  const withoutBlockComments = sql.replace(/^\s*\/\*[\s\S]*?\*\/\s*/, '');
+  const withoutLineComment = withoutBlockComments.replace(/^\s*--[^\r\n]*(?:\r?\n|$)/, '');
+  return withoutLineComment.trim().match(/^([a-z]+)/i)?.[1].toUpperCase() ?? '';
+}
+
+/** Conservative guard used only for a profile explicitly marked read-only. */
+function isReadOnlySql(sql: string): boolean {
+  // Reject mutation keywords anywhere in the submitted batch. This is
+  // intentionally conservative for a read-only profile: a false positive is
+  // safer than letting a second statement bypass the check.
+  if (/\b(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|TRUNCATE)\b/i.test(sql) || /\bINTO\s+(OUTFILE|DUMPFILE)\b/i.test(sql)) {
+    return false;
+  }
+  const keyword = firstSqlKeyword(sql);
+  // `USE` only changes the session's default schema and performs no mutation,
+  // so switching the active database stays possible on read-only profiles.
+  return ['SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN', 'USE'].includes(keyword);
+}
+
+function isResultSetHeader(value: unknown): value is ResultSetHeader {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'affectedRows' in value &&
+    'fieldCount' in value &&
+    ('warningStatus' in value || 'warningCount' in value)
+  );
+}
+
+function queryFields(fields: readonly FieldPacket[] | undefined): QueryField[] {
+  return (fields ?? []).map((field) => ({
+    name: field.name,
+    type: field.typeName ?? (field.type === undefined ? undefined : String(field.type)),
+  }));
+}
+
+function queryRows(rows: readonly MysqlRow[], fields: readonly FieldPacket[]): { values: unknown[][]; truncated: boolean } {
+  const visible = rows.slice(0, MAX_QUERY_ROWS);
+  return {
+    values: visible.map((row) => fields.map((field) => row[field.name])),
+    truncated: rows.length > visible.length,
+  };
+}
 
 export class MySqlDriver implements DatabaseDriver {
   readonly engine: EngineId;
@@ -99,16 +159,29 @@ export class MySqlDriver implements DatabaseDriver {
     // pure option builder stays free of `fs` so tests can inject a fake reader.
     const options = buildMysqlConnectionOptions(this.config, (filePath) => readFileSync(filePath, 'utf8'));
 
-    const listener = token.onCancellationRequested(() => {
-      this.connection?.destroy();
-    });
+    let cancelled = false;
     let connection: Connection | undefined;
+    const listener = token.onCancellationRequested(() => {
+      cancelled = true;
+      this.connection?.destroy();
+      connection?.destroy();
+    });
     try {
       connection = await createConnection(options);
+      if (cancelled || token.isCancellationRequested) {
+        connection.destroy();
+        throw new DbError('CANCELLED', 'The connection was cancelled.');
+      }
       this.attachErrorLogger(connection);
       this.connection = connection;
     } catch (error) {
       connection?.destroy();
+      if (error instanceof DbError) {
+        throw error;
+      }
+      if (cancelled || token.isCancellationRequested) {
+        throw new DbError('CANCELLED', 'The connection was cancelled.', error);
+      }
       throw toMysqlError(error, 'CONNECTION_REFUSED');
     } finally {
       listener.dispose();
@@ -134,10 +207,8 @@ export class MySqlDriver implements DatabaseDriver {
   }
 
   async ping(token: CancelToken = NEVER_CANCELLED): Promise<number> {
-    const connection = this.requireConnection();
-    this.throwIfCancelled(token);
     const started = Date.now();
-    await connection.query('SELECT 1');
+    await this.runQuery('SELECT 1', [], token, 'QUERY_ERROR');
     return Date.now() - started;
   }
 
@@ -160,29 +231,96 @@ export class MySqlDriver implements DatabaseDriver {
     return scope === undefined || scope === '' ? [] : [scope];
   }
 
-  async listTables(ref: SchemaRef): Promise<TableInfo[]> {
-    const rows = await this.query(MYSQL_SQL.tables, [mysqlScope(ref)]);
+  async listTables(ref: SchemaRef, token?: CancelToken): Promise<TableInfo[]> {
+    const rows = await this.query(MYSQL_SQL.tables, [mysqlScope(ref)], token);
     return toTableInfos(rows);
   }
 
-  async listColumns(ref: TableRef): Promise<ColumnInfo[]> {
-    const rows = await this.query(MYSQL_SQL.columns, [mysqlScope(ref), ref.table]);
+  async listColumns(ref: TableRef, token?: CancelToken): Promise<ColumnInfo[]> {
+    const rows = await this.query(MYSQL_SQL.columns, [mysqlScope(ref), ref.table], token);
     return toColumnInfos(rows);
   }
 
-  async listRoutines(ref: SchemaRef): Promise<RoutineInfo[]> {
-    const rows = await this.query(MYSQL_SQL.routines, [mysqlScope(ref)]);
+  async listRoutines(ref: SchemaRef, token?: CancelToken): Promise<RoutineInfo[]> {
+    const rows = await this.query(MYSQL_SQL.routines, [mysqlScope(ref)], token);
     return toRoutineInfos(rows);
   }
 
-  // -- not in this milestone -------------------------------------------------
+  // -- query execution and table data ---------------------------------------
 
-  async execute(_sql: string, _token?: CancelToken): Promise<never> {
-    throw new DbError('UNSUPPORTED_OPERATION', 'Statement execution is not implemented for MySQL yet.');
+  async execute(sql: string, token: CancelToken = NEVER_CANCELLED): Promise<QueryExecutionResult> {
+    if (sql.trim() === '') {
+      throw new DbError('QUERY_ERROR', 'Enter at least one SQL statement before running the query.');
+    }
+    if (this.config.profile.readOnly && !isReadOnlySql(sql)) {
+      throw new DbError('PERMISSION_DENIED', 'This connection is marked read-only; the statement was not executed.');
+    }
+
+    const started = Date.now();
+    const [rawResult, rawFields] = await this.runQuery(sql, [], token, 'QUERY_ERROR');
+    const fields = queryFields(rawFields);
+    const resultSet: QueryResultSet = {
+      statementIndex: 0,
+      statement: sql,
+      fields,
+      rows: [],
+      isMutation: isResultSetHeader(rawResult),
+      truncated: false,
+      durationMs: 0,
+    };
+
+    if (resultSet.isMutation) {
+      const affected = Number((rawResult as ResultSetHeader).affectedRows);
+      if (Number.isFinite(affected)) {
+        resultSet.rowsAffected = affected;
+      }
+    } else if (Array.isArray(rawResult)) {
+      const mapped = queryRows(rawResult as MysqlRow[], rawFields);
+      resultSet.rows = mapped.values;
+      resultSet.truncated = mapped.truncated;
+    } else if (rawResult !== undefined && rawResult !== null) {
+      throw new DbError('QUERY_ERROR', 'The database returned an unsupported query result.');
+    }
+
+    const durationMs = Date.now() - started;
+    resultSet.durationMs = durationMs;
+    return {
+      sql,
+      results: [resultSet],
+      durationMs,
+      notices: [],
+    };
   }
 
-  async getTableData(_ref: TableRef, _request: TableDataRequest, _token?: CancelToken): Promise<never> {
-    throw new DbError('UNSUPPORTED_OPERATION', 'Table browsing is not implemented for MySQL yet.');
+  async getTableData(
+    ref: TableRef,
+    request: TableDataRequest,
+    token: CancelToken = NEVER_CANCELLED,
+  ): Promise<TableDataPage> {
+    const columns = await this.listColumns(ref, token);
+    const options = this.tableDataOptions(ref, columns, request);
+    const page = buildTableDataSql(options);
+    const rows = await this.query(page.sql, page.params, token);
+
+    let totalRows: number | undefined;
+    if (this.capabilities.countRows) {
+      const count = buildTableCountSql(options);
+      const countRows = await this.query(count.sql, count.params, token);
+      const total = Number(countRows[0]?.['total']);
+      if (Number.isFinite(total)) {
+        totalRows = total;
+      }
+    }
+
+    return {
+      columns,
+      rows: rows.map((row) => columns.map((column) => row[column.name])),
+      totalRows,
+      offset: page.offset,
+      limit: page.limit,
+      primaryKey: page.primaryKey,
+      editable: !this.config.profile.readOnly && this.capabilities.editableData,
+    };
   }
 
   // -- internals -------------------------------------------------------------
@@ -214,14 +352,55 @@ export class MySqlDriver implements DatabaseDriver {
     });
   }
 
-  private async query(sql: string, params: readonly unknown[], token?: CancelToken): Promise<MysqlRow[]> {
+  private tableDataOptions(ref: TableRef, columns: ColumnInfo[], request: TableDataRequest): TableDataSqlOptions {
+    const scope = mysqlScope(ref);
+    return {
+      from: `${quoteMysqlIdentifier(scope)}.${quoteMysqlIdentifier(ref.table)}`,
+      columns,
+      request,
+      quoteIdentifier: quoteMysqlIdentifier,
+      searchExpression: (identifier) => `CAST(${identifier} AS CHAR)`,
+    };
+  }
+
+  private async runQuery(
+    sql: string,
+    params: readonly unknown[],
+    token: CancelToken | undefined,
+    fallback: 'QUERY_ERROR' | 'CONNECTION_REFUSED',
+  ): Promise<[unknown, FieldPacket[]]> {
     const connection = this.requireConnection();
     this.throwIfCancelled(token);
+    const listener = token?.onCancellationRequested(() => {
+      if (this.connection === connection) {
+        this.connection = undefined;
+      }
+      connection.destroy();
+    });
     try {
-      const [rows] = await connection.query(sql, [...params]);
-      return rows as unknown as MysqlRow[];
+      const result = (await connection.query(sql, [...params])) as unknown;
+      if (!Array.isArray(result) || result.length < 1) {
+        return [undefined, []];
+      }
+      return [result[0], (Array.isArray(result[1]) ? result[1] : []) as FieldPacket[]];
     } catch (error) {
-      throw toMysqlError(error, 'QUERY_ERROR');
+      if (token?.isCancellationRequested) {
+        throw new DbError('CANCELLED', 'The query was cancelled.', error);
+      }
+      throw toMysqlError(error, fallback);
+    } finally {
+      listener?.dispose();
     }
+  }
+
+  private async query(sql: string, params: readonly unknown[], token?: CancelToken): Promise<MysqlRow[]> {
+    const [rows] = await this.runQuery(sql, params, token, 'QUERY_ERROR');
+    if (rows === undefined || rows === null) {
+      return [];
+    }
+    if (!Array.isArray(rows)) {
+      throw new DbError('QUERY_ERROR', 'The database returned no row set for this operation.');
+    }
+    return rows as MysqlRow[];
   }
 }

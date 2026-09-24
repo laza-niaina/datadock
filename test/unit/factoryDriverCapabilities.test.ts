@@ -8,8 +8,8 @@ import type { ConnectionConfig, ConnectionProfile, DriverCapabilities, EngineId 
 /**
  * Regression guard for a bug found during the first F5 run: the MySQL driver
  * read `MYSQL_CAPABILITIES` from the factory module at module-evaluation time.
- * The factory imports the driver, so in the esbuild bundle — where the factory
- * evaluates first — the driver captured `undefined` capabilities and every
+ * The factory imports the driver, so in the esbuild bundle - where the factory
+ * evaluates first - the driver captured `undefined` capabilities and every
  * connect failed with "Cannot read properties of undefined (reading
  * 'multipleDatabases')" while all test files stayed green, because their
  * import order evaluated the driver first.

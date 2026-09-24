@@ -155,7 +155,7 @@ export function toTableInfos(rows: readonly MysqlRow[]): TableInfo[] {
 // Columns
 // ---------------------------------------------------------------------------
 
-/** `EXTRA` carries `auto_increment` — but also unrelated words like `GENERATED`. */
+/** `EXTRA` carries `auto_increment` - but also unrelated words like `GENERATED`. */
 export function isAutoIncrementColumn(extra: unknown): boolean {
   return typeof extra === 'string' && /\bauto_increment\b/i.test(extra);
 }

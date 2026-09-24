@@ -28,7 +28,7 @@ export function expandHome(filePath: string, homedir: string): string {
  * Returns the configured database file path.
  *
  * Blank input is a `CONFIG_ERROR`, not a crash later during `connect()`. The
- * returned path is *not* resolved against a working directory here — the driver
+ * returned path is *not* resolved against a working directory here - the driver
  * decides that, and the wizard's file picker always stores absolute paths.
  */
 export function resolveSqlitePath(profile: ConnectionProfile, homedir: string): string {

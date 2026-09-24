@@ -7,7 +7,7 @@
  *
  * SQLite quirk honoured here: `PRAGMA table_info` does not accept a bound
  * parameter for the pragma argument, so the identifier is interpolated after
- * doubling every `"` — which is why `quoteSqliteIdentifier` is exported and
+ * doubling every `"` - which is why `quoteSqliteIdentifier` is exported and
  * tested on its own.
  */
 
@@ -88,8 +88,8 @@ export function toSqliteTableInfos(rows: readonly SqliteRow[]): TableInfo[] {
  * Returns the name of the single `INTEGER PRIMARY KEY` column (a rowid alias),
  * or `undefined`.
  *
- * SQLite auto-assigns rowids for `INTEGER PRIMARY KEY` — with or without the
- * `AUTOINCREMENT` keyword — and `PRAGMA table_info` cannot tell the two apart,
+ * SQLite auto-assigns rowids for `INTEGER PRIMARY KEY` - with or without the
+ * `AUTOINCREMENT` keyword - and `PRAGMA table_info` cannot tell the two apart,
  * so both are reported as auto-increment. Multi-column primary keys (`pk` =
  * 1-based position, so >1 distinct values) and non-INTEGER types are not
  * rowid aliases.

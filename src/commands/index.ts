@@ -8,6 +8,7 @@
 import * as vscode from 'vscode';
 import { registerConnectionCommands } from './connectionCommands';
 import { registerExplorerCommands } from './explorerCommands';
+import { registerQueryCommands } from './queryCommands';
 import type { CommandServices, Register } from './types';
 
 export type { CommandServices } from './types';
@@ -21,4 +22,5 @@ export function registerCommands(context: vscode.ExtensionContext, services: Com
 
   registerConnectionCommands(register, services);
   registerExplorerCommands(register, services);
+  registerQueryCommands(register, services);
 }

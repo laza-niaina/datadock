@@ -3,7 +3,7 @@
  * `dist/extension.js` (currently only `sql-wasm.wasm`).
  *
  * IMPORTANT: nothing under `src/db` may import `vscode`, and this module keeps
- * that promise — `__dirname` is a plain Node.js free variable. esbuild leaves it
+ * that promise - `__dirname` is a plain Node.js free variable. esbuild leaves it
  * untouched for `format: 'cjs'`, so inside the shipped bundle it is
  * `<extension>/dist`, which is exactly where `esbuild.js` copies
  * `sql-wasm.wasm` to.

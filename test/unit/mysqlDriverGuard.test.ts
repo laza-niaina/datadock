@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { DbError } from '../../src/db/errors';
-import { MARIADB_CAPABILITIES, MYSQL_CAPABILITIES, MySqlDriver } from '../../src/db/drivers/mysql/mysqlDriver';
+import { MARIADB_CAPABILITIES, MYSQL_CAPABILITIES, MySqlDriver, quoteMysqlIdentifier } from '../../src/db/drivers/mysql/mysqlDriver';
 import { NULL_LOGGER } from '../../src/db/types';
 import type { ConnectionConfig, ConnectionProfile } from '../../src/db/types';
 
@@ -47,6 +47,11 @@ describe('MySqlDriver (disconnected guard)', () => {
     assert.equal(driver.capabilities, MARIADB_CAPABILITIES);
   });
 
+  it('quotes MySQL identifiers without allowing delimiter injection', () => {
+    assert.equal(quoteMysqlIdentifier('users'), '`users`');
+    assert.equal(quoteMysqlIdentifier('we`ird'), '`we``ird`');
+  });
+
   it('reports disconnected before connect', () => {
     const driver = new MySqlDriver('mysql', config('mysql'), { logger: NULL_LOGGER });
     assert.equal(driver.isConnected(), false);
@@ -68,13 +73,20 @@ describe('MySqlDriver (disconnected guard)', () => {
     assert.deepEqual(await driver.listSchemas('   '), []);
   });
 
-  it('rejects execute and getTableData with UNSUPPORTED_OPERATION', async () => {
+  it('requires a live connection for execute and getTableData', async () => {
     const driver = new MySqlDriver('mysql', config('mysql'), { logger: NULL_LOGGER });
-    await assert.rejects(driver.execute('SELECT 1'), isDbErrorCode('UNSUPPORTED_OPERATION'));
+    await assert.rejects(driver.execute('SELECT 1'), isDbErrorCode('CONNECTION_LOST'));
     await assert.rejects(
       driver.getTableData(TABLE_REF, { offset: 0, limit: 50 }),
-      isDbErrorCode('UNSUPPORTED_OPERATION'),
+      isDbErrorCode('CONNECTION_LOST'),
     );
+  });
+
+  it('refuses mutations on a read-only profile before opening a socket', async () => {
+    const readOnlyConfig = config('mysql');
+    readOnlyConfig.profile.readOnly = true;
+    const driver = new MySqlDriver('mysql', readOnlyConfig, { logger: NULL_LOGGER });
+    await assert.rejects(driver.execute('DELETE FROM users'), isDbErrorCode('PERMISSION_DENIED'));
   });
 
   it('tolerates disconnect when never connected', async () => {
