@@ -7,32 +7,14 @@
  * capabilities (`backupTool`) and the engine id the driver reports.
  */
 
-import type { ConnectionConfig, DriverCapabilities } from '../../types';
+import type { ConnectionConfig } from '../../types';
 import type { DriverFactory } from '../../driverRegistry';
-import { MySqlDriver } from './mysqlDriver';
+import { MARIADB_CAPABILITIES, MYSQL_CAPABILITIES, MySqlDriver } from './mysqlDriver';
 
-export const MYSQL_CAPABILITIES: DriverCapabilities = {
-  // A MySQL schema IS a database: showing both levels would render
-  // `app > app > Tables`, so the explorer's schema level stays off.
-  schemas: false,
-  multipleDatabases: true,
-  views: true,
-  routines: true,
-  // Metadata-only milestone: no statement execution and no table data yet.
-  editableData: false,
-  serverSidePagination: true,
-  // COUNT(*) is a full InnoDB scan, so it must not be issued automatically.
-  countRows: false,
-  transactions: true,
-  ssl: true,
-  sshTunnel: true,
-  backupTool: 'mysqldump',
-};
-
-export const MARIADB_CAPABILITIES: DriverCapabilities = {
-  ...MYSQL_CAPABILITIES,
-  backupTool: 'mariadb-dump',
-};
+// Keep the original factory-module exports for callers that imported the
+// capability metadata from here; the implementation now lives in the driver to
+// keep the factory → driver dependency one-way.
+export { MARIADB_CAPABILITIES, MYSQL_CAPABILITIES } from './mysqlDriver';
 
 /** Socket-free profile validation: the same problems the wizard would report. */
 export function validateMySqlConfig(config: ConnectionConfig): string[] {

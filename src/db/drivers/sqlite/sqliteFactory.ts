@@ -3,27 +3,14 @@
  */
 
 import { homedir } from 'node:os';
-import type { ConnectionConfig, DriverCapabilities } from '../../types';
+import type { ConnectionConfig } from '../../types';
 import type { DriverFactory } from '../../driverRegistry';
-import { SqliteDriver } from './sqliteDriver';
-import { resolveSqlitePath } from './sqlitePath';
+import { SQLITE_CAPABILITIES, SqliteDriver } from './sqliteDriver';
 
-export const SQLITE_CAPABILITIES: DriverCapabilities = {
-  schemas: false,
-  // The key flag: makes the explorer skip the database level and show the
-  // object folders (Tables/Views) directly under the connection node.
-  multipleDatabases: false,
-  views: true,
-  routines: false, // SQLite has no stored procedures, so no Procedures/Functions folders.
-  editableData: false,
-  serverSidePagination: true,
-  // COUNT(*) scans a local b-tree; keep it out of any automatic path.
-  countRows: false,
-  transactions: false, // No statement execution path yet; sql.js can do BEGIN/COMMIT later.
-  ssl: false,
-  sshTunnel: false,
-  // backupTool omitted: the database is already fully in memory, no CLI is needed.
-};
+// Preserve the original factory-module export while the implementation lives
+// in the driver, avoiding the circular factory/driver evaluation.
+export { SQLITE_CAPABILITIES } from './sqliteDriver';
+import { resolveSqlitePath } from './sqlitePath';
 
 /** Socket-free profile validation, mirroring `validation.ts` for file engines. */
 export function validateSqliteConfig(config: ConnectionConfig): string[] {

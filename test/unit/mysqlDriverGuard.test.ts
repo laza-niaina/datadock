@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { DbError } from '../../src/db/errors';
-import { MySqlDriver } from '../../src/db/drivers/mysql/mysqlDriver';
-import { MARIADB_CAPABILITIES, MYSQL_CAPABILITIES } from '../../src/db/drivers/mysql/mysqlFactory';
+import { MARIADB_CAPABILITIES, MYSQL_CAPABILITIES, MySqlDriver } from '../../src/db/drivers/mysql/mysqlDriver';
 import { NULL_LOGGER } from '../../src/db/types';
 import type { ConnectionConfig, ConnectionProfile } from '../../src/db/types';
 

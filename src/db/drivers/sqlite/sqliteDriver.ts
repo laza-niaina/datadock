@@ -31,7 +31,25 @@ import type { DriverDeps } from '../../driverRegistry';
 import { SQLITE_SQL, rowsFromExecResult, tableInfoPragma, toSqliteColumnInfos, toSqliteTableInfos } from './sqliteCatalog';
 import { toSqliteError } from './sqliteErrors';
 import { resolveSqlitePath, DEFAULT_SQLITE_SCHEMA } from './sqlitePath';
-import { SQLITE_CAPABILITIES } from './sqliteFactory';
+
+// Capabilities live in the driver, not in the factory, so the import stays
+// one-way (factory → driver); see mysqlDriver.ts for the cycle they caused.
+export const SQLITE_CAPABILITIES: DriverCapabilities = {
+  schemas: false,
+  // The key flag: makes the explorer skip the database level and show the
+  // object folders (Tables/Views) directly under the connection node.
+  multipleDatabases: false,
+  views: true,
+  routines: false, // SQLite has no stored procedures, so no Procedures/Functions folders.
+  editableData: false,
+  serverSidePagination: true,
+  // COUNT(*) scans a local b-tree; keep it out of any automatic path.
+  countRows: false,
+  transactions: false, // No statement execution path yet; sql.js can do BEGIN/COMMIT later.
+  ssl: false,
+  sshTunnel: false,
+  // backupTool omitted: the database is already fully in memory, no CLI is needed.
+};
 
 const WASM_FILE = 'sql-wasm.wasm';
 

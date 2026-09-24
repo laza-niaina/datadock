@@ -38,7 +38,31 @@ import {
 } from './mysqlCatalog';
 import { buildMysqlConnectionOptions } from './mysqlConnectionOptions';
 import { toMysqlError } from './mysqlErrors';
-import { MARIADB_CAPABILITIES, MYSQL_CAPABILITIES } from './mysqlFactory';
+// Capabilities live in the driver, not in the factory: the factory imports this
+// module, so a module-scope read of a factory export here runs during the
+// circular evaluation and captures `undefined` in the esbuild bundle.
+export const MYSQL_CAPABILITIES: DriverCapabilities = {
+  // A MySQL schema IS a database: showing both levels would render
+  // `app > app > Tables`, so the explorer's schema level stays off.
+  schemas: false,
+  multipleDatabases: true,
+  views: true,
+  routines: true,
+  // Metadata-only milestone: no statement execution and no table data yet.
+  editableData: false,
+  serverSidePagination: true,
+  // COUNT(*) is a full InnoDB scan, so it must not be issued automatically.
+  countRows: false,
+  transactions: true,
+  ssl: true,
+  sshTunnel: true,
+  backupTool: 'mysqldump',
+};
+
+export const MARIADB_CAPABILITIES: DriverCapabilities = {
+  ...MYSQL_CAPABILITIES,
+  backupTool: 'mariadb-dump',
+};
 
 const ENGINE_CAPABILITIES: Readonly<Record<'mysql' | 'mariadb', DriverCapabilities>> = {
   mysql: MYSQL_CAPABILITIES,
