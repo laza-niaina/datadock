@@ -11,11 +11,15 @@
 import type { DriverRegistry } from '../driverRegistry';
 import { mariadbFactory, mysqlFactory } from './mysql/mysqlFactory';
 import { sqliteFactory } from './sqlite/sqliteFactory';
+import { postgresqlFactory } from './postgresql/postgresqlFactory';
+import { mssqlFactory } from './mssql/mssqlFactory';
 
-export { mariadbFactory, mysqlFactory, sqliteFactory };
+export { mariadbFactory, mysqlFactory, sqliteFactory, postgresqlFactory, mssqlFactory };
 
 export function registerBuiltinDrivers(registry: DriverRegistry): void {
   registry.register(mysqlFactory);
   registry.register(mariadbFactory);
   registry.register(sqliteFactory);
+  registry.register(postgresqlFactory);
+  registry.register(mssqlFactory);
 }

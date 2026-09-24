@@ -74,3 +74,20 @@ export function sqlStatusLabels(context: SqlStatusContext): SqlStatusLabels {
     database: `${engineIcon(context.engine)} ${engineLabel(context.engine)} : ${context.database ?? 'Select DB'}`,
   };
 }
+
+/**
+ * Visual separation between the two context groups of the one-item status bar
+ * label. Non-breaking spaces: the status bar collapses a run of plain spaces
+ * into one, so a plain gap would not be visible.
+ */
+export const SQL_CONTEXT_GAP = '\u00a0\u00a0\u00a0';
+
+/**
+ * The single status bar item text: `$(database) : <connection>` and
+ * `<engine icon> <Engine> : <database>` joined by a clear gap, so both groups
+ * read as one line without a second StatusBarItem.
+ */
+export function combinedSqlStatusText(labels: SqlStatusLabels): string {
+  const database = labels.database ?? '$(server) Select DB';
+  return `${labels.connection}${SQL_CONTEXT_GAP}${database}`;
+}

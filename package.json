@@ -1,7 +1,7 @@
 {
   "name": "database-client-free",
   "displayName": "DataDock",
-  "description": "DataDock: a free database tooling extension for VS Code to explore MySQL, MariaDB and SQLite databases. No account, no telemetry and no connection limit.",
+  "description": "DataDock: a free database tooling extension for VS Code to explore MySQL, MariaDB, SQLite, PostgreSQL and SQL Server databases. No account, no telemetry and no connection limit.",
   "version": "0.1.0",
   "license": "MIT",
   "publisher": "dbclient",
@@ -18,6 +18,10 @@
     "mysql",
     "mariadb",
     "sqlite",
+    "postgresql",
+    "postgres",
+    "sql server",
+    "mssql",
     "database",
     "sql client"
   ],
@@ -36,7 +40,10 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
+    "@types/mssql": "^12.3.0",
     "@types/node": "^22.10.0",
+    "@types/pg": "^8.23.1",
+    "@types/sql.js": "^1.4.11",
     "@types/vscode": "1.85.0",
     "esbuild": "^0.24.2",
     "eslint": "^9.17.0",
@@ -154,7 +161,7 @@
       },
       {
         "command": "dbclient.query.manageContext",
-        "title": "Manage SQL File Context",
+        "title": "Manage Context for SQL File",
         "category": "DataDock"
       },
       {
@@ -162,11 +169,6 @@
         "title": "Run This Query",
         "category": "DataDock",
         "icon": "$(play)"
-      },
-      {
-        "command": "dbclient.query.manageContext",
-        "title": "Manage Context for SQL File",
-        "category": "DataDock"
       },
       {
         "command": "dbclient.table.view",
@@ -423,7 +425,9 @@
     }
   },
   "dependencies": {
+    "mssql": "^12.7.2",
     "mysql2": "^3.24.4",
+    "pg": "^8.23.0",
     "sql.js": "^1.14.2"
   }
 }

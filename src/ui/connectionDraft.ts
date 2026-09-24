@@ -126,8 +126,10 @@ export function emptyDraft(id: string, engine: string, factory?: DriverFactory):
 /**
  * Builds the profile to persist.
  *
- * `base` supplies `createdAt` and any driver-specific option the form does not
- * manage, so saving never silently drops settings this UI does not know about.
+ * `base` supplies `id`, `createdAt` and any driver-specific option the form
+ * does not manage, so saving never silently drops settings this UI does not
+ * know about and never loses the profile identity (the webview draft round-trip
+ * does not include `id`).
  *
  * SSL and SSH blocks are written even while disabled, as long as they hold at
  * least one value: toggling a section off must not erase what the user typed.
@@ -154,7 +156,13 @@ export function profileFromDraft(draft: FormDraft, base: ConnectionProfile): Con
     draft.sshEnabled || !!sshHost || !!sshUser || !!sshKeyPath || !!sshRemoteHost;
 
   return {
-    id: draft.id,
+    // The webview form only posts `[data-draft]` fields, so the draft never
+    // carries an id at runtime. `base` holds the authoritative id: a fresh
+    // randomUUID for create mode, the stored profile's id for edit mode. Ids
+    // are immutable and never editable in the UI, so `base.id` is always
+    // correct; relying on `draft.id` silently persisted id-less profiles,
+    // which the association store and connection list both reject.
+    id: base.id,
     name: draft.name.trim(),
     engine: draft.engine as ConnectionProfile['engine'],
     host: draft.host.trim() || undefined,

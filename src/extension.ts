@@ -23,7 +23,7 @@ import { ConnectionNode } from './explorer/nodes';
 import { MetadataCache } from './metadata/metadataCache';
 import { initSqlFileAssociations } from './sql/sqlFileState';
 import { SqlBlockCodeLensProvider } from './sql/sqlCodeLens';
-import { sqlStatusLabels } from './util/engineDisplay';
+import { combinedSqlStatusText, sqlStatusLabels } from './util/engineDisplay';
 import { globalRedactor } from './util/redaction';
 
 /** Kept for `deactivate`, which must close every socket before VS Code exits. */
@@ -133,15 +133,25 @@ export function activate(context: vscode.ExtensionContext): void {
   // Click opens a menu to change connection, change database, or disconnect.
   const sqlStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 62);
 
+  // Generation token: refresh reads async storage, and events can fire while a
+  // read is in flight. Only the newest run may touch the item, otherwise an
+  // older read (for the previously active file) overwrites the fresh label.
+  let refreshGeneration = 0;
   const refreshSqlStatus = async (): Promise<void> => {
+    const generation = ++refreshGeneration;
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.languageId !== 'sql') {
-      sqlStatusBar.hide();
+      if (generation === refreshGeneration) {
+        sqlStatusBar.hide();
+      }
       return;
     }
     const uri = editor.document.uri;
     const association = associations.getAssociation(uri);
     const profile = association ? await store.get(association.connectionId) : undefined;
+    if (generation !== refreshGeneration) {
+      return;
+    }
     const database = profile
       ? association?.database ??
         (profile.engine === 'sqlite' ? basename(sqliteFilePath(profile) ?? '') || undefined : profile.database)
@@ -156,11 +166,8 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    // Single combined label: $(database) : Local MariaDB $(server) MariaDB : learn
-    const combinedText = labels.database
-      ? `${labels.connection} ${labels.database}`
-      : `${labels.connection} $(server) Select DB`;
-    sqlStatusBar.text = combinedText;
+    // One item, two visually separated groups: connection, then engine+database.
+    sqlStatusBar.text = combinedSqlStatusText(labels);
     sqlStatusBar.tooltip = 'DataDock context for this SQL file. Click to change connection or database.';
     sqlStatusBar.command = 'dbclient.query.manageContext';
     sqlStatusBar.show();

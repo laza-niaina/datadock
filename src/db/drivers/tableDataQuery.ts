@@ -21,6 +21,25 @@ export interface TableDataSqlOptions {
   readonly quoteIdentifier: (name: string) => string;
   /** Optional engine-specific text projection used by free-text search. */
   readonly searchExpression?: (quotedIdentifier: string) => string;
+  /**
+   * Placeholder text for the 1-based parameter position.
+   * MySQL/SQLite keep the default `?`; PostgreSQL needs `$1..$n` and SQL
+   * Server `@p1..@pN`. Called strictly in parameter order.
+   */
+  readonly placeholder?: (index: number) => string;
+  /**
+   * Engine-specific page clause. When omitted the builder emits
+   * `LIMIT ? OFFSET ?` and appends limit/offset to the parameters. When
+   * provided the clause is used verbatim with no page parameters, so the
+   * driver can inline its own safe integers (SQL Server's OFFSET/FETCH
+   * requires a per-connection statement shape).
+   */
+  readonly pagination?: (limit: number, offset: number) => string;
+  /**
+   * Forces an ORDER BY even without user sorts. SQL Server's OFFSET/FETCH
+   * requires an ORDER BY; MySQL and SQLite never use this.
+   */
+  readonly requireOrderBy?: boolean;
 }
 
 export interface TableWhere {
@@ -77,6 +96,9 @@ export function buildTableWhere(options: TableDataSqlOptions): TableWhere {
   const clauses: string[] = [];
   const params: unknown[] = [];
   const quote = options.quoteIdentifier;
+  const placeholder = options.placeholder ?? (() => '?');
+  let paramIndex = 0;
+  const ph = (): string => placeholder(++paramIndex);
 
   for (const filter of options.request.filters ?? []) {
     const column = columns.get(filter.column.trim());
@@ -98,7 +120,7 @@ export function buildTableWhere(options: TableDataSqlOptions): TableWhere {
           clauses.push('1 = 0');
           continue;
         }
-        clauses.push(`${identifier} IN (${values.map(() => '?').join(', ')})`);
+        clauses.push(`${identifier} IN (${values.map(() => ph()).join(', ')})`);
         params.push(...values.map(filterValue));
         continue;
       }
@@ -113,7 +135,7 @@ export function buildTableWhere(options: TableDataSqlOptions): TableWhere {
         if (filter.value === undefined) {
           throw new DbError('CONFIG_ERROR', `Filter '${filter.column}' needs a value.`);
         }
-        clauses.push(`${identifier} ${filter.operator} ?`);
+        clauses.push(`${identifier} ${filter.operator} ${ph()}`);
         params.push(filterValue(filter.value));
         continue;
       default:
@@ -127,7 +149,7 @@ export function buildTableWhere(options: TableDataSqlOptions): TableWhere {
     if (searchable.length > 0) {
       const projection = options.searchExpression ?? ((identifier: string) => identifier);
       const pattern = `%${escapeLike(search)}%`;
-      clauses.push(`(${searchable.map((column) => `${projection(quote(column.name))} LIKE ? ESCAPE '!'`).join(' OR ')})`);
+      clauses.push(`(${searchable.map((column) => `${projection(quote(column.name))} LIKE ${ph()} ESCAPE '!'`).join(' OR ')})`);
       params.push(...searchable.map(() => pattern));
     }
   }
@@ -171,10 +193,25 @@ export function buildTableDataSql(options: TableDataSqlOptions): TableDataSql {
     orderBy.push(`${options.quoteIdentifier(column.name)} ${sort.direction.toUpperCase()}`);
   }
 
-  const orderClause = orderBy.length > 0 ? ` ORDER BY ${orderBy.join(', ')}` : '';
+  const requiresOrder = orderBy.length > 0 || options.requireOrderBy === true;
+  const orderClause = requiresOrder ? ` ORDER BY ${orderBy.join(', ') || '(SELECT NULL)'}` : '';
+
+  // Page parameters keep their place after the WHERE parameters, so the
+  // placeholder numbering stays correct for PostgreSQL and SQL Server.
+  const placeholder = options.placeholder ?? (() => '?');
+  let pageSql: string;
+  let params: unknown[];
+  if (options.pagination) {
+    pageSql = `${options.pagination(limit, offset)}`;
+    params = where.params;
+  } else {
+    pageSql = `LIMIT ${placeholder(where.params.length + 1)} OFFSET ${placeholder(where.params.length + 2)}`;
+    params = [...where.params, limit, offset];
+  }
+
   return {
-    sql: `SELECT ${select} FROM ${options.from}${where.clause}${orderClause} LIMIT ? OFFSET ?`,
-    params: [...where.params, limit, offset],
+    sql: `SELECT ${select} FROM ${options.from}${where.clause}${orderClause} ${pageSql}`,
+    params,
     primaryKey: options.columns.filter((column) => column.isPrimaryKey).map((column) => column.name),
     limit,
     offset,

@@ -9,6 +9,7 @@ import {
   emptySecretPresence,
   profileFromDraft,
   secretsFromDraft,
+  type FormDraft,
 } from '../../src/ui/connectionDraft';
 
 const CAPABILITIES: DriverCapabilities = {
@@ -119,6 +120,17 @@ describe('profileFromDraft', () => {
     assert.equal(profile.database, 'app');
     assert.equal(profile.schema, 'public');
     assert.equal(profile.createdAt, BASE.createdAt);
+  });
+
+  it('keeps the base id when the webview draft has no id field', () => {
+    // The form webview posts only its `[data-draft]` inputs, so the draft it
+    // sends back has no `id`. The saved profile must still carry the base id,
+    // otherwise the per-file association store and the connection list reject
+    // the profile (id-less), which previously broke the SQL file context flow.
+    const draft: Partial<FormDraft> = draftFromProfile(BASE);
+    delete draft.id;
+    const profile = profileFromDraft(draft as FormDraft, BASE);
+    assert.equal(profile.id, BASE.id);
   });
 
   it('turns empty text into undefined rather than empty strings', () => {

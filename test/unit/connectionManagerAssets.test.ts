@@ -140,7 +140,7 @@ describe('ConnectionManager asset-directory threading', () => {
   it('still works end to end with the builtin registry wiring', async () => {
     const registry = new DriverRegistry('test');
     registerBuiltinDrivers(registry);
-    assert.equal(registry.size, 3);
+    assert.equal(registry.size, 5);
 
     const manager = new ConnectionManager({ registry, logger: NULL_LOGGER, assetsDir: 'x' });
     // MySQL driver exists; connecting to a dead port classifies the failure.

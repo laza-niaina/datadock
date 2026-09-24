@@ -58,6 +58,13 @@ const options = {
     // esbuild resolution errors on platforms where they are not installable.
     'cpu-features',
     './crypto/build/Release/sshcrypto.node',
+    // Optional native connectors for pg (libpq bindings, cloudflare socket)
+    // and mssql (Windows integrated auth). None are used by this build: pg
+    // always uses pure-JS sockets and mssql only SQL authentication. External
+    // so esbuild does not try to resolve them on any platform.
+    'pg-native',
+    'pg-cloudflare',
+    'msnodesqlv8',
   ],
 };
 

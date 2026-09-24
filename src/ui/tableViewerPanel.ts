@@ -1,17 +1,33 @@
 /**
- * Paginated, read-only table viewer.
+ * Paginated table viewer built on the shared DataDock data grid (the
+ * "Result View" design): toolbar with search, clear-filters, transpose and the
+ * Export dialog; typed sortable headers; per-column filters; row-number gutter
+ * with expandable row details.
  *
- * The webview only sends navigation intents. Every page is fetched by the
- * extension host through the selected driver, so credentials never cross the
- * webview boundary and identifiers remain validated by the data layer.
+ * Unlike the query result grid (client-side filtering of one fetched batch),
+ * the table viewer pushes filters, sort, search and paging down to the driver
+ * through `TableDataRequest`, so large tables stay server-side paginated. The
+ * webview only sends navigation intents; every page is fetched by the extension
+ * host, credentials never cross the webview boundary and identifiers remain
+ * validated by the data layer.
  */
 
 import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import type { ConnectionManager } from '../connections/connectionManager';
 import { DbError } from '../db/errors';
-import type { Logger, TableDataPage, TableDataRequest, TableRef, TableSort } from '../db/types';
+import type {
+  Logger,
+  TableDataPage,
+  TableDataRequest,
+  TableFilter,
+  TableRef,
+  TableSort,
+} from '../db/types';
 import { globalRedactor } from '../util/redaction';
+import type { GridCell, GridColumn, GridExportFormat, GridFilter } from './dataGrid/dataGridModel';
+import { GRID_PAGE_SIZE, exportFileName, renderGridExport, serializeGridValue } from './dataGrid/dataGridModel';
+import { renderDataGridPage, escapeHtml, type GridViewGrid } from './dataGrid/dataGridView';
 
 interface TableViewerOptions {
   readonly manager: ConnectionManager;
@@ -24,148 +40,80 @@ type TableViewerMessage =
   | { type: 'ready' }
   | { type: 'refresh'; search?: unknown }
   | { type: 'page'; offset: unknown }
-  | { type: 'sort'; column: unknown };
+  | { type: 'apply'; search?: unknown; filters?: unknown; sort?: unknown }
+  | { type: 'export'; format?: unknown; target?: unknown };
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+const VALID_OPERATORS = new Set(['=', '!=', '<', '<=', '>', '>=', 'LIKE', 'NOT LIKE', 'IS NULL', 'IS NOT NULL']);
 
-function displayValue(value: unknown): string {
-  if (value === null) return 'NULL';
-  if (value === undefined) return '';
-  if (value instanceof Uint8Array) return `<binary ${value.byteLength} bytes>`;
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value === 'bigint') return value.toString();
-  if (typeof value === 'object') {
-    try {
-      return JSON.stringify(value) ?? String(value);
-    } catch {
-      return String(value);
+/** Narrows untrusted webview filter JSON into `TableFilter`s for the driver. */
+function toTableFilters(value: unknown): TableFilter[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const filters: TableFilter[] = [];
+  for (const entry of value.slice(0, 10)) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    const candidate = entry as { column?: unknown; operator?: unknown; value?: unknown };
+    if (typeof candidate.column !== 'string' || typeof candidate.operator !== 'string') {
+      continue;
+    }
+    if (!VALID_OPERATORS.has(candidate.operator)) {
+      continue;
+    }
+    if (candidate.operator === 'IS NULL' || candidate.operator === 'IS NOT NULL') {
+      filters.push({ column: candidate.column, operator: candidate.operator as TableFilter['operator'] });
+      continue;
+    }
+    if (typeof candidate.value === 'string' && candidate.value.length <= 500) {
+      filters.push({
+        column: candidate.column,
+        operator: candidate.operator as TableFilter['operator'],
+        value: candidate.value,
+      });
     }
   }
-  return String(value);
+  return filters;
 }
 
-function styles(nonce: string): string {
-  return `<style nonce="${nonce}">
-    :root { color-scheme: light dark; }
-    body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); padding: 14px; }
-    h1 { font-size: 1.2rem; margin: 0 0 10px; }
-    .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
-    input { flex: 1 1 220px; min-width: 160px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); padding: 5px 7px; }
-    button { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 0; padding: 5px 9px; cursor: pointer; }
-    button.secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
-    button:disabled { opacity: .5; cursor: default; }
-    .status { color: var(--vscode-descriptionForeground); margin: 7px 0; }
-    .error { color: var(--vscode-errorForeground); white-space: pre-wrap; }
-    .table-wrap { overflow: auto; border: 1px solid var(--vscode-panel-border); }
-    table { border-collapse: collapse; min-width: 100%; }
-    th, td { border-bottom: 1px solid var(--vscode-panel-border); padding: 6px 9px; text-align: left; vertical-align: top; white-space: pre-wrap; }
-    th { position: sticky; top: 0; background: var(--vscode-editorWidget-background); }
-    th button { padding: 2px 4px; color: inherit; background: transparent; text-align: left; }
-    tr:last-child td { border-bottom: 0; }
-    td.null { color: var(--vscode-descriptionForeground); font-style: italic; }
-    .empty { color: var(--vscode-descriptionForeground); text-align: center; padding: 18px; }
-    .hint { color: var(--vscode-descriptionForeground); margin-top: 10px; }
-  </style>`;
+/** Narrows untrusted webview sort JSON. */
+function toTableSort(value: unknown): TableSort[] | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  const candidate = value as { column?: unknown; direction?: unknown };
+  if (typeof candidate.column !== 'string' || (candidate.direction !== 'asc' && candidate.direction !== 'desc')) {
+    return undefined;
+  }
+  return [{ column: candidate.column, direction: candidate.direction }];
 }
 
-function renderPage(
-  page: TableDataPage | undefined,
-  request: TableDataRequest,
-  title: string,
-  error: string | undefined,
-): string {
-  const nonce = randomBytes(16).toString('base64');
-  const csp = [
-    "default-src 'none'",
-    `style-src 'nonce-${nonce}'`,
-    `script-src 'nonce-${nonce}'`,
-    "font-src 'none'",
-    "base-uri 'none'",
-    "form-action 'none'",
-  ].join('; ');
+function toGridFilters(filters: readonly TableFilter[]): GridFilter[] {
+  return filters.map((filter) => ({
+    column: filter.column,
+    operator: filter.operator,
+    value: 'value' in filter && typeof filter.value === 'string' ? filter.value : undefined,
+  }));
+}
 
-  if (error) {
-    return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta http-equiv="Content-Security-Policy" content="${csp}" /><title>DataDock Table</title>${styles(nonce)}</head><body><h1>${escapeHtml(title)}</h1><p class="error">${escapeHtml(error)}</p></body></html>`;
+function exportFiltersFor(format: GridExportFormat): Record<string, string[]> {
+  switch (format) {
+    case 'csv':
+      return { 'CSV': ['csv'] };
+    case 'json':
+      return { 'JSON': ['json'] };
+    case 'sql':
+      return { 'SQL': ['sql'] };
+    case 'markdown':
+      return { 'Markdown': ['md'] };
   }
-  if (!page) {
-    return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta http-equiv="Content-Security-Policy" content="${csp}" /><title>DataDock Table</title>${styles(nonce)}</head><body><h1>${escapeHtml(title)}</h1><p>Loading…</p></body></html>`;
-  }
-
-  const headers = page.columns
-    .map((column) => {
-      const active = request.sort?.some((sort) => sort.column === column.name);
-      const direction = request.sort?.find((sort) => sort.column === column.name)?.direction ?? 'asc';
-      const marker = active ? ` ${direction === 'asc' ? '▲' : '▼'}` : '';
-      return `<th scope="col"><button type="button" data-sort="${escapeHtml(column.name)}">${escapeHtml(column.name)}${marker}</button></th>`;
-    })
-    .join('');
-  const rows = page.rows
-    .map((row) =>
-      `<tr>${row
-        .map((value) => (value === null ? '<td class="null">NULL</td>' : `<td>${escapeHtml(displayValue(value))}</td>`))
-        .join('')}</tr>`,
-    )
-    .join('');
-  const body = rows || `<tr><td colspan="${Math.max(1, page.columns.length)}" class="empty">No rows found.</td></tr>`;
-  const first = page.rows.length === 0 ? 0 : page.offset + 1;
-  const last = page.offset + page.rows.length;
-  const total = page.totalRows === undefined ? '' : ` of ${page.totalRows}`;
-  const previousDisabled = page.offset <= 0 ? ' disabled' : '';
-  const nextDisabled = page.totalRows !== undefined && last >= page.totalRows ? ' disabled' : '';
-  const search = escapeHtml(request.search ?? '');
-  const script = `
-    (function () {
-      var vscode = acquireVsCodeApi();
-      var search = document.getElementById('search');
-      document.getElementById('refresh').addEventListener('click', function () {
-        vscode.postMessage({ type: 'refresh', search: search.value });
-      });
-      search.addEventListener('keydown', function (event) {
-        if (event.key === 'Enter') { vscode.postMessage({ type: 'refresh', search: search.value }); }
-      });
-      document.getElementById('previous').addEventListener('click', function () { vscode.postMessage({ type: 'page', offset: ${Math.max(0, request.offset - request.limit)} }); });
-      document.getElementById('next').addEventListener('click', function () { vscode.postMessage({ type: 'page', offset: ${request.offset + request.limit} }); });
-      document.querySelectorAll('[data-sort]').forEach(function (button) {
-        button.addEventListener('click', function () { vscode.postMessage({ type: 'sort', column: button.getAttribute('data-sort') }); });
-      });
-    }());
-  `;
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="${csp}" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DataDock Table</title>
-  ${styles(nonce)}
-</head>
-<body>
-  <h1>${escapeHtml(title)}</h1>
-  <div class="toolbar">
-    <input id="search" type="search" value="${search}" placeholder="Search text columns…" />
-    <button id="refresh" type="button">Refresh</button>
-    <button id="previous" class="secondary" type="button"${previousDisabled}>Previous</button>
-    <button id="next" class="secondary" type="button"${nextDisabled}>Next</button>
-  </div>
-  <p class="status">Rows ${first}-${last}${total} · page size ${request.limit}</p>
-  <div class="table-wrap"><table><thead><tr>${headers}</tr></thead><tbody>${body}</tbody></table></div>
-  <p class="hint">Read-only view${page.editable ? '' : ' for this connection'}.</p>
-  <script nonce="${nonce}">${script}</script>
-</body>
-</html>`;
 }
 
 export class TableViewerPanel {
   private static readonly open = new Map<string, TableViewerPanel>();
 
-  private request: TableDataRequest = { offset: 0, limit: 100, search: '' };
+  private request: TableDataRequest = { offset: 0, limit: GRID_PAGE_SIZE, search: '' };
   private page?: TableDataPage;
   private error?: string;
 
@@ -208,7 +156,11 @@ export class TableViewerPanel {
         await this.load();
         return;
       case 'refresh':
-        this.request = { ...this.request, offset: 0, search: typeof value.search === 'string' ? value.search.slice(0, 200) : '' };
+        this.request = {
+          ...this.request,
+          offset: 0,
+          search: typeof value.search === 'string' ? value.search.slice(0, 200) : this.request.search,
+        };
         await this.load();
         return;
       case 'page': {
@@ -217,14 +169,22 @@ export class TableViewerPanel {
         await this.load();
         return;
       }
-      case 'sort': {
-        if (typeof value.column !== 'string' || !this.page?.columns.some((column) => column.name === value.column)) {
-          return;
-        }
-        const current = this.request.sort?.[0];
-        const direction: TableSort['direction'] = current?.column === value.column && current.direction === 'asc' ? 'desc' : 'asc';
-        this.request = { ...this.request, offset: 0, sort: [{ column: value.column, direction }] };
+      case 'apply': {
+        const search = typeof value.search === 'string' ? value.search.slice(0, 200) : '';
+        this.request = {
+          ...this.request,
+          offset: 0,
+          search,
+          filters: toTableFilters(value.filters),
+          sort: toTableSort(value.sort),
+        };
         await this.load();
+        return;
+      }
+      case 'export': {
+        const format: GridExportFormat =
+          value.format === 'json' || value.format === 'sql' || value.format === 'markdown' ? value.format : 'csv';
+        await this.export(value.target === 'editor', format);
         return;
       }
       default:
@@ -232,6 +192,7 @@ export class TableViewerPanel {
     }
   }
 
+  /** Fetches the current page (server-side filters/sort) and repaints. */
   private async load(): Promise<void> {
     try {
       const driver = this.options.manager.requireDriver(this.options.ref.connectionId);
@@ -243,7 +204,91 @@ export class TableViewerPanel {
       this.error = globalRedactor.redact(dbError.message);
       this.options.logger.error('Table viewer query failed.', { code: dbError.code });
     }
-    this.panel.webview.html = renderPage(this.page, this.request, this.options.title, this.error);
+    this.panel.webview.html = this.render();
+  }
+
+  private grid(): GridViewGrid {
+    const page = this.page;
+    const columns: GridColumn[] = (page?.columns ?? []).map((column) => ({ name: column.name, type: column.dataType }));
+    const rows: GridCell[][] = (page?.rows ?? []).map((row) => row.map((value) => serializeGridValue(value)));
+    return {
+      id: 'table',
+      table: this.options.ref.table,
+      columns,
+      rows,
+      label: this.options.ref.table,
+      status: this.error !== undefined ? 'error' : 'ok',
+    };
+  }
+
+  private pageCount(): number {
+    const page = this.page;
+    if (!page) {
+      return 1;
+    }
+    if (page.totalRows !== undefined) {
+      return Math.max(1, Math.ceil(page.totalRows / Math.max(1, page.limit)));
+    }
+    return Math.floor(page.offset / Math.max(1, page.limit)) + (page.rows.length === page.limit ? 2 : 1);
+  }
+
+  private render(): string {
+    if (this.error !== undefined && !this.page) {
+      const nonce = randomBytes(16).toString('base64');
+      const csp = [
+        "default-src 'none'",
+        `style-src 'nonce-${nonce}'`,
+        `script-src 'nonce-${nonce}'`,
+        "font-src 'none'",
+        "base-uri 'none'",
+        "form-action 'none'",
+      ].join('; ');
+      return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta http-equiv="Content-Security-Policy" content="${csp}" /><title>DataDock Table</title></head><body><h1>${escapeHtml(this.options.title)}</h1><p class="error">${escapeHtml(this.error)}</p></body></html>`;
+    }
+    const view = {
+      mode: 'table' as const,
+      grids: [this.grid()],
+      activeIndex: 0,
+      filters: toGridFilters(this.request.filters ?? []),
+      sort: this.request.sort?.[0],
+      search: this.request.search,
+      pageIndex: Math.floor(this.request.offset / Math.max(1, this.request.limit)),
+      pageCount: this.pageCount(),
+      totalRows: this.page?.totalRows,
+      cost: `Page size ${this.request.limit}`,
+    };
+    return renderDataGridPage(view, this.options.title);
+  }
+
+  /** Exports the currently fetched page (host-side rendering). */
+  private async export(toEditor: boolean, format: GridExportFormat): Promise<void> {
+    const grid = this.grid();
+    if (grid.rows.length === 0) {
+      void vscode.window.showInformationMessage('Nothing to export: the current page has no rows.');
+      return;
+    }
+    const content = renderGridExport(format, this.options.ref.table, grid.columns, grid.rows);
+    if (content.trim() === '') {
+      void vscode.window.showInformationMessage('Nothing to export.');
+      return;
+    }
+    if (toEditor) {
+      const document = await vscode.workspace.openTextDocument({
+        content,
+        language: format === 'json' ? 'json' : format === 'markdown' ? 'markdown' : 'plaintext',
+      });
+      await vscode.window.showTextDocument(document, { preview: true });
+      return;
+    }
+    const target = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(exportFileName(this.options.ref.table, format)),
+      filters: exportFiltersFor(format),
+    });
+    if (!target) {
+      return;
+    }
+    await vscode.workspace.fs.writeFile(target, Buffer.from(content, 'utf8'));
+    void vscode.window.showInformationMessage(`DataDock: exported to ${target.fsPath}.`);
   }
 
   dispose(): void {

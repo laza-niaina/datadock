@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { sqlStatusLabels } from '../../src/util/engineDisplay';
+import { combinedSqlStatusText, SQL_CONTEXT_GAP, sqlStatusLabels } from '../../src/util/engineDisplay';
 
 describe('sqlStatusLabels', () => {
   it('shows only the Connect entry point when the file has no connection', () => {
@@ -38,5 +38,29 @@ describe('sqlStatusLabels', () => {
       connection: '$(database) : SQLite Local',
       database: '$(file) SQLite : application.db',
     });
+  });
+});
+
+describe('combinedSqlStatusText', () => {
+  it('joins the two context groups with a visible gap', () => {
+    const labels = sqlStatusLabels({ connectionName: 'Local MySQL', engine: 'mysql', database: 'learn' });
+    assert.equal(
+      combinedSqlStatusText(labels),
+      `$(database) : Local MySQL${SQL_CONTEXT_GAP}$(server) MySQL : learn`,
+    );
+  });
+
+  it('keeps the Select DB placeholder when only a connection is known', () => {
+    const labels = sqlStatusLabels({ connectionName: 'Local MySQL' });
+    assert.equal(
+      combinedSqlStatusText(labels),
+      `$(database) : Local MySQL${SQL_CONTEXT_GAP}$(server) Select DB`,
+    );
+  });
+
+  it('builds the gap from non-breaking spaces so the status bar cannot collapse it', () => {
+    assert.equal(SQL_CONTEXT_GAP.length, 3);
+    assert.ok([...SQL_CONTEXT_GAP].every((char) => char.charCodeAt(0) === 0x00a0));
+    assert.ok(!SQL_CONTEXT_GAP.includes(' '));
   });
 });

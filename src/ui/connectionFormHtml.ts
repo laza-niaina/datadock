@@ -1,6 +1,11 @@
 /**
  * HTML for the connection form webview.
  *
+ * Design basis: the Database Client "Add Connection" form - a page header with
+ * the connection name, engine type as a tab strip, server fields in labelled
+ * rows, SSL and SSH sections, and a connection-test status strip next to the
+ * actions.
+ *
  * Constraints honoured here:
  *  - **Theme variables only** (`--vscode-*`), so light, dark and high-contrast
  *    themes all work without a single hard-coded colour.
@@ -8,6 +13,8 @@
  *    resources.
  *  - **No secrets leave the webview** except what the user just typed, and the
  *    host never sends a stored secret back.
+ *  - **No emoji and no em dash**: status markers use text glyphs only
+ *    (● ✕ ⟳), never colour alone.
  *
  * The webview script is written without template literals on purpose: it is
  * embedded in a template literal here, so `${` inside it would have to be
@@ -30,29 +37,58 @@ const BASE_STYLES = `
     margin: 0;
   }
 
-  form { padding: 14px 16px 0; max-width: 720px; }
+  form { max-width: 780px; margin: 0 auto; padding: 18px 20px 24px; }
 
-  fieldset {
+  .app-header { margin-bottom: 18px; }
+  .app-header h1 { font-size: 1.5em; font-weight: 600; margin: 0 0 4px; }
+  .app-header .tagline { margin: 0; color: var(--vscode-descriptionForeground); font-size: 0.92em; }
+
+  .card {
     border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
-    border-radius: 4px;
-    padding: 10px 12px 14px;
+    border-radius: 6px;
+    padding: 14px 16px 16px;
     margin: 0 0 14px;
   }
 
-  legend {
-    padding: 0 6px;
+  .card-title {
     font-weight: 600;
-    color: var(--vscode-foreground);
+    margin: 0 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
-  .row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 10px; }
+  .field-label { font-weight: 600; margin: 0 0 6px; }
+
+  .segmented { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+
+  .tab {
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    color: var(--vscode-foreground);
+    background-color: transparent;
+    border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
+    border-radius: 4px;
+    padding: 5px 14px;
+    cursor: pointer;
+  }
+  .tab:hover:not(.active) { background-color: var(--vscode-list-hoverBackground, transparent); }
+  .tab.active {
+    color: var(--vscode-button-foreground);
+    background-color: var(--vscode-button-background);
+    border-color: var(--vscode-button-background);
+  }
+
+  .row { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 12px; }
   .row:last-child { margin-bottom: 0; }
 
-  .field { display: flex; flex-direction: column; flex: 1 1 180px; min-width: 140px; }
-  .field.narrow { flex: 0 0 110px; }
+  .field { display: flex; align-items: center; gap: 10px; flex: 1 1 280px; min-width: 200px; }
   .field.wide { flex: 1 1 100%; }
+  .field.narrow { flex: 0 0 170px; min-width: 130px; }
+  .field label { flex: 0 0 132px; font-weight: 600; }
+  .field input, .field select { flex: 1 1 auto; min-width: 0; }
 
-  label { margin-bottom: 4px; opacity: 0.9; }
+  .req { color: var(--vscode-errorForeground); }
 
   input[type="text"], input[type="number"], input[type="password"], select, textarea {
     font-family: var(--vscode-font-family);
@@ -61,24 +97,25 @@ const BASE_STYLES = `
     background-color: var(--vscode-input-background);
     border: 1px solid var(--vscode-input-border, transparent);
     border-radius: 2px;
-    padding: 4px 6px;
+    padding: 5px 8px;
     width: 100%;
   }
 
   textarea { min-height: 74px; resize: vertical; font-family: var(--vscode-editor-font-family); }
+  input::placeholder, textarea::placeholder { color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground)); }
 
   input:focus, select:focus, textarea:focus {
     outline: 1px solid var(--vscode-focusBorder);
     outline-offset: -1px;
   }
 
-  input[type="checkbox"] { accent-color: var(--vscode-checkbox-background, auto); }
+  input[type="checkbox"] { accent-color: var(--vscode-checkbox-background, auto); width: auto; }
 
-  .check { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .check { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
   .check:last-child { margin-bottom: 0; }
-  .check label { margin: 0; }
+  .check label { font-weight: normal; margin: 0; }
 
-  .with-button { display: flex; gap: 6px; align-items: stretch; }
+  .with-button { display: flex; gap: 6px; align-items: stretch; flex: 1 1 auto; }
   .with-button input { flex: 1 1 auto; }
 
   button {
@@ -88,7 +125,7 @@ const BASE_STYLES = `
     background-color: var(--vscode-button-background);
     border: 1px solid transparent;
     border-radius: 2px;
-    padding: 5px 12px;
+    padding: 6px 16px;
     cursor: pointer;
   }
 
@@ -101,75 +138,118 @@ const BASE_STYLES = `
   }
 
   button.secondary:hover:not(:disabled) { background-color: var(--vscode-button-secondaryHoverBackground); }
+  button.inline { padding: 4px 10px; }
 
-  button.inline { padding: 4px 8px; }
+  .hint { opacity: 0.75; font-size: 0.92em; margin-top: 4px; color: var(--vscode-descriptionForeground); }
+  .secret-state { font-size: 0.92em; opacity: 0.8; min-height: 1.2em; color: var(--vscode-descriptionForeground); }
 
   .actions {
     position: sticky;
     bottom: 0;
     display: flex;
-    gap: 8px;
+    flex-wrap: wrap;
     align-items: center;
-    padding: 12px 16px;
-    margin: 0 -16px;
+    gap: 8px;
+    padding: 10px 20px 12px;
+    margin: 6px -20px 0;
     background-color: var(--vscode-editor-background);
     border-top: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
-    flex-wrap: wrap;
   }
 
   .spacer { flex: 1 1 auto; }
 
   .status {
-    padding: 8px 10px;
-    border-radius: 3px;
-    margin: 12px 0;
+    display: none;
+    flex: 1 1 100%;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
     white-space: pre-wrap;
     word-break: break-word;
-    display: none;
+    margin-bottom: 2px;
   }
 
-  .status.visible { display: block; }
+  .status.visible { display: flex; }
 
   .status.ok {
     color: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+    border-color: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
     background-color: var(--vscode-inputValidation-infoBackground, transparent);
-    border: 1px solid var(--vscode-charts-green);
   }
 
   .status.error {
-    color: var(--vscode-foreground);
+    color: var(--vscode-errorForeground);
+    border-color: var(--vscode-errorForeground);
     background-color: var(--vscode-inputValidation-errorBackground, var(--vscode-editorWidget-background));
-    border: 1px solid var(--vscode-errorForeground);
   }
 
   .status.busy {
-    color: var(--vscode-foreground);
+    color: var(--vscode-descriptionForeground);
+    border-color: var(--vscode-panel-border, var(--vscode-widget-border));
     background-color: var(--vscode-inputValidation-warningBackground, transparent);
-    border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
   }
-
-  .hint { opacity: 0.75; font-size: 0.92em; margin-top: 3px; }
-
-  .secret-state { font-size: 0.92em; opacity: 0.8; min-height: 1.2em; }
 
   .hidden { display: none !important; }
 `;
 
 const FORM_BODY = `
 <form id="connection-form" autocomplete="off" novalidate>
-  <fieldset>
-    <legend>General</legend>
+  <div class="app-header">
+    <h1 id="form-title">Add Connection</h1>
+    <p class="tagline">Free database tooling. No account, no telemetry, no connection limit.</p>
+  </div>
+
+  <section class="card" id="identity-section">
+    <div class="card-title">Connection</div>
+    <div class="field-label">Database Type</div>
+    <div class="segmented" id="engine-tabs" role="group" aria-label="Database Type"></div>
+    <div class="hidden" aria-hidden="true">
+      <select id="f-engine" data-draft="engine"></select>
+    </div>
     <div class="row">
       <div class="field wide">
-        <label for="f-name">Connection name</label>
-        <input type="text" id="f-name" data-draft="name" spellcheck="false" />
+        <label for="f-name">Connection Name</label>
+        <input type="text" id="f-name" data-draft="name" spellcheck="false" placeholder="My connection" />
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="server-section">
+    <div class="card-title">Server</div>
+    <div class="row">
+      <div class="field">
+        <label for="f-host">Host <span class="req">*</span></label>
+        <input type="text" id="f-host" data-draft="host" spellcheck="false" placeholder="localhost" />
+      </div>
+      <div class="field narrow">
+        <label for="f-port">Port <span class="req">*</span></label>
+        <input type="number" id="f-port" data-draft="port" min="1" max="65535" />
       </div>
     </div>
     <div class="row">
       <div class="field">
-        <label for="f-engine">Engine</label>
-        <select id="f-engine" data-draft="engine"></select>
+        <label for="f-user">Username <span class="req">*</span></label>
+        <input type="text" id="f-user" data-draft="user" spellcheck="false" />
       </div>
+      <div class="field">
+        <label for="f-password">Password</label>
+        <input type="password" id="f-password" data-draft="password" autocomplete="new-password" />
+      </div>
+    </div>
+    <div class="row">
+      <div class="hint" id="password-state"></div>
+    </div>
+    <div class="check">
+      <input type="checkbox" id="f-clearPassword" data-draft="clearPassword" />
+      <label for="f-clearPassword">Remove the stored password</label>
+    </div>
+  </section>
+
+  <section class="card" id="defaults-section">
+    <div class="card-title">Defaults</div>
+    <div class="row">
       <div class="field">
         <label for="f-database">Default database</label>
         <input type="text" id="f-database" data-draft="database" spellcheck="false" />
@@ -183,39 +263,10 @@ const FORM_BODY = `
       <input type="checkbox" id="f-readOnly" data-draft="readOnly" />
       <label for="f-readOnly">Read-only - refuse every write made through this connection</label>
     </div>
-  </fieldset>
+  </section>
 
-  <fieldset id="server-section">
-    <legend>Server</legend>
-    <div class="row">
-      <div class="field">
-        <label for="f-host">Host</label>
-        <input type="text" id="f-host" data-draft="host" spellcheck="false" placeholder="localhost" />
-      </div>
-      <div class="field narrow">
-        <label for="f-port">Port</label>
-        <input type="number" id="f-port" data-draft="port" min="1" max="65535" />
-      </div>
-      <div class="field">
-        <label for="f-user">User</label>
-        <input type="text" id="f-user" data-draft="user" spellcheck="false" />
-      </div>
-    </div>
-    <div class="row">
-      <div class="field wide">
-        <label for="f-password">Password</label>
-        <input type="password" id="f-password" data-draft="password" autocomplete="new-password" />
-        <div class="hint" id="password-state"></div>
-      </div>
-    </div>
-    <div class="check">
-      <input type="checkbox" id="f-clearPassword" data-draft="clearPassword" />
-      <label for="f-clearPassword">Remove the stored password</label>
-    </div>
-  </fieldset>
-
-  <fieldset id="file-section" class="hidden">
-    <legend>Database file</legend>
+  <section class="card hidden" id="file-section">
+    <div class="card-title">Database file</div>
     <div class="row">
       <div class="field wide">
         <label for="f-filePath">File</label>
@@ -223,13 +274,15 @@ const FORM_BODY = `
           <input type="text" id="f-filePath" data-draft="filePath" spellcheck="false" placeholder="C:/data/example.db" />
           <button type="button" class="secondary inline" data-action="pick-file" data-target="filePath">Browse…</button>
         </div>
-        <div class="hint">The file is opened in place. No size limit is imposed by this extension.</div>
       </div>
     </div>
-  </fieldset>
+    <div class="row">
+      <div class="hint">The file is opened in place. No size limit is imposed by this extension.</div>
+    </div>
+  </section>
 
-  <fieldset id="ssl-section">
-    <legend>SSL / TLS</legend>
+  <section class="card" id="ssl-section">
+    <div class="card-title">SSL / TLS</div>
     <div class="check">
       <input type="checkbox" id="f-sslEnabled" data-draft="sslEnabled" />
       <label for="f-sslEnabled">Use SSL / TLS</label>
@@ -267,9 +320,10 @@ const FORM_BODY = `
         </div>
       </div>
     </div>
-  </fieldset>
-  <fieldset id="ssh-section">
-    <legend>SSH tunnel</legend>
+  </section>
+
+  <section class="card" id="ssh-section">
+    <div class="card-title">SSH tunnel</div>
     <div class="check">
       <input type="checkbox" id="f-sshEnabled" data-draft="sshEnabled" />
       <label for="f-sshEnabled">Connect through an SSH tunnel</label>
@@ -301,7 +355,6 @@ const FORM_BODY = `
         <div class="field" data-auth="password">
           <label for="f-sshPassword">SSH password</label>
           <input type="password" id="f-sshPassword" data-draft="sshPassword" autocomplete="new-password" />
-          <div class="hint" id="sshPassword-state"></div>
         </div>
       </div>
       <div class="row" data-auth="privateKey">
@@ -317,15 +370,18 @@ const FORM_BODY = `
         <div class="field wide">
           <label for="f-sshPrivateKey">Private key contents (alternative to a file)</label>
           <textarea id="f-sshPrivateKey" data-draft="sshPrivateKey" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
-          <div class="hint" id="sshPrivateKey-state"></div>
         </div>
       </div>
       <div class="row" data-auth="privateKey">
         <div class="field wide">
           <label for="f-sshPassphrase">Key passphrase</label>
           <input type="password" id="f-sshPassphrase" data-draft="sshPassphrase" autocomplete="new-password" />
-          <div class="hint" id="sshPassphrase-state"></div>
         </div>
+      </div>
+      <div class="row">
+        <div class="hint" id="sshPassword-state"></div>
+        <div class="hint" id="sshPrivateKey-state"></div>
+        <div class="hint" id="sshPassphrase-state"></div>
       </div>
       <div class="check">
         <input type="checkbox" id="f-clearSshPassword" data-draft="clearSshPassword" />
@@ -334,6 +390,10 @@ const FORM_BODY = `
       <div class="check">
         <input type="checkbox" id="f-clearSshPrivateKey" data-draft="clearSshPrivateKey" />
         <label for="f-clearSshPrivateKey">Remove the stored private key</label>
+      </div>
+      <div class="check">
+        <input type="checkbox" id="f-clearSshPassphrase" data-draft="clearSshPassphrase" />
+        <label for="f-clearSshPassphrase">Remove the stored key passphrase</label>
       </div>
       <div class="row">
         <div class="field">
@@ -347,14 +407,13 @@ const FORM_BODY = `
       </div>
       <div class="hint">Leave the server host and port above set to the values reachable from the SSH server.</div>
     </div>
-  </fieldset>
-
-  <div class="status" id="status"></div>
+  </section>
 
   <div class="actions">
+    <div class="status" id="status"></div>
     <button type="button" class="secondary" data-action="test" id="test-button">Test Connection</button>
-    <span class="spacer"></span>
     <button type="button" class="secondary" data-action="cancel">Cancel</button>
+    <span class="spacer"></span>
     <button type="button" data-action="save" id="save-button">Save</button>
   </div>
 
@@ -415,11 +474,32 @@ const SCRIPT_PART_ONE = `
   function renderEngineOptions() {
     var select = field('engine');
     select.textContent = '';
+    var tabsHost = byId('engine-tabs');
+    tabsHost.textContent = '';
     for (var i = 0; i < engines.length; i++) {
+      var label = engines[i].label + (engines[i].status === 'beta' ? ' (beta)' : '');
       var option = document.createElement('option');
       option.value = engines[i].id;
-      option.textContent = engines[i].label + (engines[i].status === 'beta' ? ' (beta)' : '');
+      option.textContent = label;
       select.appendChild(option);
+      var tab = document.createElement('button');
+      tab.type = 'button';
+      tab.className = 'tab';
+      tab.setAttribute('data-engine', engines[i].id);
+      tab.setAttribute('aria-pressed', 'false');
+      tab.textContent = label;
+      tabsHost.appendChild(tab);
+    }
+    syncTabs();
+  }
+
+  function syncTabs() {
+    var current = field('engine').value;
+    var buttons = byId('engine-tabs').querySelectorAll('[data-engine]');
+    for (var i = 0; i < buttons.length; i++) {
+      var active = buttons[i].getAttribute('data-engine') === current;
+      if (active) { buttons[i].classList.add('active'); } else { buttons[i].classList.remove('active'); }
+      buttons[i].setAttribute('aria-pressed', active ? 'true' : 'false');
     }
   }
 `;
@@ -449,10 +529,19 @@ const SCRIPT_PART_TWO = `
     }
   }
 
+  // Text-only status markers: ● ok, ✕ error, ⟳ busy (never colour alone).
+  function statusGlyph(kind) {
+    if (kind === 'ok') { return '●'; }
+    if (kind === 'error') { return '✕'; }
+    if (kind === 'busy') { return '⟳'; }
+    return '';
+  }
+
   function setStatus(kind, text) {
     if (!text) { statusEl.className = 'status'; statusEl.textContent = ''; return; }
     statusEl.className = 'status visible ' + kind;
-    statusEl.textContent = text;
+    var glyph = statusGlyph(kind);
+    statusEl.textContent = glyph ? glyph + ' ' + text : text;
   }
 
   function setBusy(busy, label) {
@@ -485,21 +574,26 @@ const SCRIPT_PART_THREE = `
     var target = event.target;
     if (!target || !target.getAttribute) { return; }
     var action = target.getAttribute('data-action');
-    if (!action) { return; }
     if (action === 'pick-file') {
       api.postMessage({ type: 'pickFile', target: target.getAttribute('data-target') });
       return;
     }
     if (action === 'save') { api.postMessage({ type: 'save', draft: readDraft() }); return; }
     if (action === 'test') { api.postMessage({ type: 'test', draft: readDraft() }); return; }
-    if (action === 'cancel') { api.postMessage({ type: 'cancel' }); }
+    if (action === 'cancel') { api.postMessage({ type: 'cancel' }); return; }
+    var engineId = target.getAttribute('data-engine');
+    if (engineId) {
+      field('engine').value = engineId;
+      syncTabs();
+      applyEngine();
+    }
   });
 
   form.addEventListener('change', function (event) {
     var target = event.target;
     if (!target || !target.getAttribute) { return; }
     var key = target.getAttribute('data-draft');
-    if (key === 'engine') { applyEngine(); }
+    if (key === 'engine') { syncTabs(); applyEngine(); }
     if (key === 'sslEnabled' || key === 'sshEnabled' || key === 'sshAuthMethod') { applyToggles(); }
   });
 
@@ -509,9 +603,12 @@ const SCRIPT_PART_THREE = `
 
     if (message.type === 'init') {
       mode = message.mode;
+      var title = byId('form-title');
+      if (title) { title.textContent = mode === 'create' ? 'Add Connection' : 'Edit Connection'; }
       engines = message.engines || [];
       renderEngineOptions();
       writeDraft(message.draft || {});
+      syncTabs();
       applyEngine();
       applyToggles();
       applyPresence(message.secretPresence);

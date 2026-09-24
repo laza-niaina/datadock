@@ -158,8 +158,8 @@ async function ensureRunDatabase(
  *
  * Selectors appear ONLY while the file is being configured for the first time.
  * A run on a file that already has an association (or on an explicit tree
- * node) never re-opens a picker: the stored database override — or the
- * profile/session default when none is configured — scopes the batch
+ * node) never re-opens a picker: the stored database override - or the
+ * profile/session default when none is configured - scopes the batch
  * implicitly, and a user-written `USE` inside the SQL still works.
  */
 async function pickTargetForDocument(
@@ -174,16 +174,19 @@ async function pickTargetForDocument(
   let profile: ConnectionProfile | undefined;
   let hadContext = false;
 
+  let association: SqlFileAssociation | undefined;
   const directId = connectionIdOf(node);
   if (directId) {
     profile = await services.store.get(directId);
     hadContext = true;
   } else {
-    const association = state.getAssociation(uri);
+    association = state.getAssociation(uri);
     if (association) {
       override = association.database;
       profile = await services.store.get(association.connectionId);
-      hadContext = true;
+      // A stored association whose profile no longer exists is not a context:
+      // the file goes through the guided first-time configuration again.
+      hadContext = !!profile;
     }
   }
 
@@ -192,6 +195,9 @@ async function pickTargetForDocument(
     if (!profile) {
       return undefined;
     }
+    // Any override left over belonged to a connection that may be gone; the
+    // fresh association starts from the profile default.
+    override = undefined;
     await state.set(uri, profile.id);
     void vscode.window.setStatusBarMessage(`DataDock: this SQL file will use '${profile.name}'.`, 4000);
   }
@@ -265,7 +271,6 @@ async function pickAndSetDatabase(
   }
   await sqlFileAssociations().setDatabase(uri, picked.database);
   services.cache.invalidate(`profile:${profile.id}`);
-  void vscode.window.showInformationMessage(`This SQL file will use database '${picked.database}'.`);
 }
 
 function toRunnableStatements(statements: readonly SqlStatement[], baseOffset: number): RunnableStatement[] {
@@ -599,7 +604,14 @@ export function registerQueryCommands(register: Register, services: CommandServi
     }
     const state = sqlFileAssociations();
     let association = state.getAssociation(activeUri);
-    if (!association) {
+    if (association) {
+      const existing = await services.store.get(association.connectionId);
+      if (!existing) {
+        // The stored connection is gone: reconfigure the file end to end.
+        await vscode.commands.executeCommand('dbclient.query.selectConnection', activeUri);
+        return;
+      }
+    } else {
       const picked = await pickProfile(services, 'Select a DataDock connection for this SQL file');
       if (!picked) {
         return;
@@ -655,7 +667,6 @@ export function registerQueryCommands(register: Register, services: CommandServi
       return;
     }
     await state.set(activeUri, picked.profile.id);
-    void vscode.window.showInformationMessage(`This SQL file will use '${picked.profile.name}'.`);
     // Database Client-style flow: a connection pick is followed immediately by
     // the database picker so the file gets a full run context in one step.
     // Engines without multiple databases (SQLite) are skipped silently.
@@ -709,33 +720,32 @@ export function registerQueryCommands(register: Register, services: CommandServi
 
     const state = sqlFileAssociations();
     const association = state.getAssociation(activeUri);
-    const hasConnection = !!association;
+    // A stale association (deleted connection) is treated as no context so the
+    // menu reconfigures the file instead of showing an empty picker.
+    const profile = association ? await services.store.get(association.connectionId) : undefined;
     const profiles = await services.store.list();
 
     const items: { label: string; description?: string; action: 'connection' | 'database' | 'disconnect' }[] = [];
 
-    if (hasConnection && association) {
-      const profile = await services.store.get(association.connectionId);
-      if (profile) {
+    if (profile && association) {
+      items.push({
+        label: '$(pencil) Change Connection',
+        description: `Current: ${profile.name}`,
+        action: 'connection',
+      });
+      if (profile.engine !== 'sqlite') {
+        const currentDb = association.database ?? profile.database;
         items.push({
-          label: '$(pencil) Change Connection',
-          description: `Current: ${profile.name}`,
-          action: 'connection',
-        });
-        if (profile.engine !== 'sqlite') {
-          const currentDb = association.database ?? profile.database;
-          items.push({
-            label: '$(database) Change Database',
-            description: currentDb ? `Current: ${currentDb}` : 'No database selected',
-            action: 'database',
-          });
-        }
-        items.push({
-          label: '$(trash) Disconnect',
-          description: `Remove context for this file`,
-          action: 'disconnect',
+          label: '$(database) Change Database',
+          description: currentDb ? `Current: ${currentDb}` : 'No database selected',
+          action: 'database',
         });
       }
+      items.push({
+        label: '$(trash) Disconnect',
+        description: `Remove context for this file`,
+        action: 'disconnect',
+      });
     } else {
       if (profiles.length === 0) {
         void vscode.window.showInformationMessage('Create a DataDock connection first.');
@@ -750,7 +760,7 @@ export function registerQueryCommands(register: Register, services: CommandServi
 
     const picked = await vscode.window.showQuickPick(items, {
       title: 'DataDock: manage context for this SQL file',
-      placeHolder: hasConnection ? 'Choose an action' : 'Select a connection',
+      placeHolder: profile ? 'Choose an action' : 'Select a connection',
     });
 
     if (!picked) {

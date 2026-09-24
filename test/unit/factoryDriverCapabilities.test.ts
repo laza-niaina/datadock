@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { mariadbFactory, mysqlFactory } from '../../src/db/drivers/mysql/mysqlFactory';
 import { sqliteFactory } from '../../src/db/drivers/sqlite/sqliteFactory';
+import { postgresqlFactory } from '../../src/db/drivers/postgresql/postgresqlFactory';
+import { mssqlFactory } from '../../src/db/drivers/mssql/mssqlFactory';
 import { NULL_LOGGER } from '../../src/db/types';
 import type { ConnectionConfig, ConnectionProfile, DriverCapabilities, EngineId } from '../../src/db/types';
 
@@ -47,7 +49,7 @@ function config(engine: EngineId): ConnectionConfig {
 }
 
 describe('factory.create wires fully defined capabilities (bundle import order)', () => {
-  for (const factory of [mysqlFactory, mariadbFactory, sqliteFactory]) {
+  for (const factory of [mysqlFactory, mariadbFactory, sqliteFactory, postgresqlFactory, mssqlFactory]) {
     it(`gives ${factory.engine} drivers every boolean capability`, () => {
       const driver = factory.create(config(factory.engine), { logger: NULL_LOGGER });
       assert.equal(driver.engine, factory.engine);

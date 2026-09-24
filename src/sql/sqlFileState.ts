@@ -76,7 +76,8 @@ export class SqlFileAssociations {
 
   /** Returns the full association stored for a document, if any. */
   getAssociation(uri: vscode.Uri): SqlFileAssociation | undefined {
-    return normalizeStored(this.load()[uri.toString()]);
+    const key = uri.toString();
+    return normalizeStored(this.load()[key]);
   }
 
   /**
@@ -87,12 +88,13 @@ export class SqlFileAssociations {
   async set(uri: vscode.Uri, connectionId: string | undefined, database?: string): Promise<void> {
     const map = this.load();
     const key = uri.toString();
+    const resolvedDatabase = typeof database === 'string' && database.length > 0 ? database : undefined;
     if (connectionId === undefined) {
       delete map[key];
     } else {
       map[key] = {
         connectionId,
-        database: typeof database === 'string' && database.length > 0 ? database : undefined,
+        database: resolvedDatabase,
       };
     }
     await this.state.update(STORAGE_KEY, map);
@@ -107,13 +109,14 @@ export class SqlFileAssociations {
     const map = this.load();
     const key = uri.toString();
     const current = normalizeStored(map[key]);
+    const resolvedDatabase = typeof database === 'string' && database.length > 0 ? database : undefined;
     if (!current) {
       await this.set(uri, undefined);
       return;
     }
     map[key] = {
       connectionId: current.connectionId,
-      database: typeof database === 'string' && database.length > 0 ? database : undefined,
+      database: resolvedDatabase,
     };
     await this.state.update(STORAGE_KEY, map);
     this.changed.fire({ uri: key, connectionId: current.connectionId, database });
