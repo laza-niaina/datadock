@@ -33,13 +33,16 @@ implemented; anything else is on the roadmap and is not advertised as working.
   selected query with **Ctrl+Enter** (or the statement under the cursor when
   nothing is selected) and the whole document with **Ctrl+Shift+Enter**. The
   engine-aware statement splitter handles string literals, comments and MySQL
-  `DELIMITER` routines, so a stored procedure body stays one statement.
+  `DELIMITER` routines, so a stored procedure body stays one statement. A blank
+  line separates two statements only when the first one has no `;`; a plain line
+  break never splits a statement. Clickable CodeLens actions sit above every
+  statement (run all, run that statement, pick the connection and the active
+  database). The status bar shows the file's connection and the active
+  engine/database; click either to change them.
 - **Rich query results**: per-statement status (ok / error / skipped), columns
   with types, `NULL` highlighting, row counts, affected rows for
   INSERT/UPDATE/DELETE, run times, and an error banner that lets you jump back
   to the exact statement in the SQL file.
-- **Table viewer**: open a table or view from the explorer, page through rows,
-  search text columns, and sort by column headers.
 - **Table viewer**: open a table or view from the explorer, page through rows,
   search text columns, and sort by column headers.
 - **MySQL and MariaDB drivers**: connect, browse databases, tables, views,
@@ -90,11 +93,14 @@ Drivers are added one at a time, each with its own tests:
 1. In the DataDock Connections view, click the SQL editor icon or run **DataDock: Open SQL Editor**.
 2. **DataDock: Select Connection for SQL File** chooses the connection that will
    be remembered for the current `.sql` file. The active SQL file also shows its
-   association in the status bar; click it to change the connection.
+   association and the active engine/database in the status bar; click either to
+   change the connection or the database. CodeLens actions above each statement
+   do the same.
 3. Put the cursor inside a statement and press **Ctrl+Enter** to run it, or select
    several statements to run them as a batch (`Ctrl+Enter` again). Press
    **Ctrl+Shift+Enter** to run every statement in the document in order; the
-   batch stops at the first error and the rest are marked as skipped.
+   batch stops at the first error and the rest are marked as skipped. Statements
+   are separated by `;` or, when a statement has no `;`, by a blank line.
 4. Click a table or view in the explorer to open the table viewer. Use Previous/Next, Search and column headers to navigate; editing controls appear only after row-editing support is implemented.
 
 ## Security
