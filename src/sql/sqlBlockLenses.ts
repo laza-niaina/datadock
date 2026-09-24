@@ -74,7 +74,7 @@ export function buildBlockLensDescriptors(
         line: block.line,
         title: info.connectionName ? `$(database) ${info.connectionName}` : '$(database) Connect',
         command: 'dbclient.query.selectConnection',
-        arguments: [],
+        arguments: [options.uri],
       },
     );
     if (info.connectionName && info.engine) {

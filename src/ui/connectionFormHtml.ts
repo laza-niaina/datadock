@@ -137,8 +137,8 @@ const BASE_STYLES = `
   }
 
   .status.error {
-    color: var(--vscode-errorForeground);
-    background-color: var(--vscode-inputValidation-errorBackground, transparent);
+    color: var(--vscode-foreground);
+    background-color: var(--vscode-inputValidation-errorBackground, var(--vscode-editorWidget-background));
     border: 1px solid var(--vscode-errorForeground);
   }
 

@@ -164,9 +164,9 @@ function styles(nonce: string): string {
     .notices { margin: 0 0 14px; padding: 8px 12px; border-left: 3px solid var(--vscode-editorWarning-foreground); background: var(--vscode-editorWidget-background); }
     .notices li { margin: 2px 0; }
     .summary-error {
-      margin: 0 0 14px; padding: 10px 12px; border-left: 3px solid var(--vscode-errorForeground);
-      background: var(--vscode-inputValidation-errorBackground, var(--vscode-editorWidget-background));
-      color: var(--vscode-errorForeground); font-weight: 600;
+      margin: 0 0 14px; padding: 10px 12px; border-left: 3px solid var(--vscode-errorForeground); border-radius: 4px;
+      background: color-mix(in srgb, var(--vscode-errorForeground) 10%, var(--vscode-editorWidget-background));
+      color: var(--vscode-foreground); font-weight: 600;
     }
     .statement-section { border: 1px solid var(--vscode-panel-border); border-radius: 6px; margin-bottom: 16px; overflow: hidden; }
     .statement-head {
@@ -194,9 +194,13 @@ function styles(nonce: string): string {
       border-bottom: 1px solid var(--vscode-panel-border);
       max-height: 240px; overflow: auto;
     }
-    .error-box { padding: 10px 12px; background: var(--vscode-inputValidation-errorBackground, transparent); }
-    .error-box strong { color: var(--vscode-errorForeground); }
-    .error-box pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--vscode-errorForeground); }
+    .error-box {
+      padding: 10px 12px;
+      border-top: 1px solid var(--vscode-panel-border);
+      background: color-mix(in srgb, var(--vscode-errorForeground) 8%, var(--vscode-editorWidget-background));
+    }
+    .error-box strong { color: var(--vscode-errorForeground); font-weight: 600; }
+    .error-box pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--vscode-foreground); }
     .result-summary {
       margin: 0; padding: 10px 12px;
       color: var(--vscode-testing-iconPassed, var(--vscode-charts-green)); font-weight: 600;

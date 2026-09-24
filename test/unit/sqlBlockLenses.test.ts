@@ -25,6 +25,7 @@ describe('SQL block CodeLens descriptors', () => {
     assert.equal(second.command, 'dbclient.query.runStatement');
     assert.equal(descriptors[2].title, '$(database) Local MariaDB');
     assert.equal(descriptors[2].command, 'dbclient.query.selectConnection');
+    assert.deepEqual(descriptors[2].arguments, ['file:///app/seed.sql']);
     const info = descriptors[3];
     assert.equal(info.line, 0);
     assert.equal(info.title, '$(server) MariaDB: restaurant');
@@ -40,6 +41,7 @@ describe('SQL block CodeLens descriptors', () => {
     assert.equal(descriptors.length, 6);
     assert.equal(descriptors[2].title, '$(database) Connect');
     assert.equal(descriptors[2].command, 'dbclient.query.selectConnection');
+    assert.deepEqual(descriptors[2].arguments, ['file:///app/seed.sql']);
     assert.ok(!descriptors.some((descriptor) => descriptor.command === 'dbclient.query.selectDatabase'));
   });
 

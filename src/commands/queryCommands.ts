@@ -395,8 +395,10 @@ export function registerQueryCommands(register: Register, services: CommandServi
     let rangeStart: number | undefined;
     let rangeEnd: number | undefined;
     const uriArg = args[0];
-    if (uriArg instanceof vscode.Uri) {
-      const document = await vscode.workspace.openTextDocument(uriArg);
+    if (uriArg instanceof vscode.Uri || (typeof uriArg === 'string' && uriArg.length > 0)) {
+      const document = await vscode.workspace.openTextDocument(
+        uriArg instanceof vscode.Uri ? uriArg : vscode.Uri.parse(uriArg),
+      );
       editor = await vscode.window.showTextDocument(document, { preview: false });
       rangeStart = typeof args[1] === 'number' ? args[1] : undefined;
       rangeEnd = typeof args[2] === 'number' ? args[2] : undefined;
@@ -439,8 +441,28 @@ export function registerQueryCommands(register: Register, services: CommandServi
 
   register('dbclient.query.selectDatabase', async (uriArg?: unknown) => {
     const editor = vscode.window.activeTextEditor;
-    const activeUri = uriArg instanceof vscode.Uri ? uriArg : editor?.document.uri;
-    if (!activeUri || (editor && editor.document.languageId !== 'sql')) {
+    const activeUri =
+      uriArg instanceof vscode.Uri
+        ? uriArg
+        : typeof uriArg === 'string' && uriArg.length > 0
+          ? vscode.Uri.parse(uriArg)
+          : editor?.document.uri;
+    if (!activeUri) {
+      void vscode.window.showInformationMessage('Open a .sql document before selecting a database.');
+      return;
+    }
+    if (uriArg instanceof vscode.Uri || typeof uriArg === 'string') {
+      try {
+        const candidate = await vscode.workspace.openTextDocument(activeUri);
+        if (candidate.languageId !== 'sql') {
+          void vscode.window.showInformationMessage('Open a .sql document before selecting a database.');
+          return;
+        }
+      } catch {
+        void vscode.window.showInformationMessage('The SQL document could not be opened.');
+        return;
+      }
+    } else if (editor && editor.document.languageId !== 'sql') {
       void vscode.window.showInformationMessage('Open a .sql document before selecting a database.');
       return;
     }
@@ -485,9 +507,30 @@ export function registerQueryCommands(register: Register, services: CommandServi
     void vscode.window.showInformationMessage(`This SQL file will use database '${picked.database}'.`);
   });
 
-  register('dbclient.query.selectConnection', async (node?: unknown) => {
-    const editor = requireSqlEditor();
-    if (!editor) {
+  register('dbclient.query.selectConnection', async (uriOrNode?: unknown) => {
+    const activeUri =
+      uriOrNode instanceof vscode.Uri
+        ? uriOrNode
+        : typeof uriOrNode === 'string' && uriOrNode.length > 0
+          ? vscode.Uri.parse(uriOrNode)
+          : vscode.window.activeTextEditor?.document.uri;
+    if (!activeUri) {
+      void vscode.window.showInformationMessage('Open a .sql document before selecting a DataDock connection.');
+      return;
+    }
+    if (uriOrNode instanceof vscode.Uri || typeof uriOrNode === 'string') {
+      try {
+        const candidate = await vscode.workspace.openTextDocument(activeUri);
+        if (candidate.languageId !== 'sql') {
+          void vscode.window.showInformationMessage('Open a .sql document before selecting a DataDock connection.');
+          return;
+        }
+      } catch {
+        void vscode.window.showInformationMessage('The SQL document could not be opened.');
+        return;
+      }
+    } else if (vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.languageId !== 'sql') {
+      void vscode.window.showInformationMessage('Open a .sql document before selecting a DataDock connection.');
       return;
     }
     const state = sqlFileAssociations();
@@ -496,7 +539,7 @@ export function registerQueryCommands(register: Register, services: CommandServi
       void vscode.window.showInformationMessage('Create a DataDock connection before running SQL.');
       return;
     }
-    const currentId = connectionIdOf(node) ?? state.get(editor.document.uri);
+    const currentId = connectionIdOf(uriOrNode) ?? state.get(activeUri);
     const picked = await vscode.window.showQuickPick(
       profiles.map((profile) => ({
         label: profile.id === currentId ? `${profile.name} (current)` : profile.name,
@@ -508,7 +551,7 @@ export function registerQueryCommands(register: Register, services: CommandServi
     if (!picked) {
       return;
     }
-    await state.set(editor.document.uri, picked.profile.id);
+    await state.set(activeUri, picked.profile.id);
     void vscode.window.showInformationMessage(`This SQL file will use '${picked.profile.name}'.`);
   });
 
