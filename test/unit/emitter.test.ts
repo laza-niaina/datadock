@@ -29,12 +29,16 @@ describe('Emitter', () => {
   it('tolerates a listener unsubscribing another one mid-dispatch', () => {
     const emitter = new Emitter<void>();
     const seen: string[] = [];
-    const second = emitter.event(() => seen.push('second'));
-
+    // Registered first so snapshot dispatch runs the disposer before the
+    // second listener, which must still receive the event being fired.
+    const subscriptions: Array<{ dispose(): void }> = [];
     emitter.event(() => {
       seen.push('first');
-      second.dispose();
+      for (const subscription of subscriptions) {
+        subscription.dispose();
+      }
     });
+    subscriptions.push(emitter.event(() => seen.push('second')));
 
     emitter.fire();
     assert.deepEqual(seen, ['first', 'second']);

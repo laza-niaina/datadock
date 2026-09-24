@@ -99,7 +99,9 @@ export function classifyNativeError(code: string | number | undefined, message: 
   if (lowered.includes('access denied') || lowered.includes('authentication failed')) return 'AUTH_FAILED';
   if (lowered.includes('password authentication')) return 'AUTH_FAILED';
   if (lowered.includes('certificate') || lowered.includes('self signed')) return 'TLS_ERROR';
-  if (lowered.includes('timed out') || lowered.includes('timeout')) return 'TIMEOUT';
+  if (lowered.includes('timed out') || lowered.includes('timeout') || lowered.includes('etimedout')) {
+    return 'TIMEOUT';
+  }
   if (lowered.includes('unknown database') || lowered.includes('does not exist')) return 'DATABASE_NOT_FOUND';
   if (lowered.includes('syntax')) return 'SYNTAX_ERROR';
   if (lowered.includes('permission denied') || lowered.includes('insufficient privilege')) return 'PERMISSION_DENIED';

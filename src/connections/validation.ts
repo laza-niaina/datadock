@@ -108,7 +108,7 @@ export function applyFactoryDefaults(profile: ConnectionProfile, factory?: Drive
   if (!factory.fileBased && (next.port === undefined || next.port === 0) && factory.defaultPort !== undefined) {
     next.port = factory.defaultPort;
   }
-  if (factory.fileBased && next.port === undefined) {
+  if (factory.fileBased) {
     delete next.port;
   }
   return next;

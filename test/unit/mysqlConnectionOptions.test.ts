@@ -42,7 +42,7 @@ describe('connectTimeoutFrom', () => {
       connectTimeoutFrom(profile({ options: { connectTimeoutMs: MAX_CONNECT_TIMEOUT_MS * 10 } })),
       MAX_CONNECT_TIMEOUT_MS,
     );
- Charleston:  });
+  });
 
   it('falls back on non-positive or non-numeric values', () => {
     assert.equal(connectTimeoutFrom(profile({ options: { connectTimeoutMs: 0 } })), DEFAULT_CONNECT_TIMEOUT_MS);
@@ -97,7 +97,7 @@ describe('buildMysqlConnectionOptions', () => {
     assert.equal(options.bigNumberStrings, true);
     assert.equal(options.enableKeepAlive, true);
     assert.equal(options.charset, DEFAULT_CHARSET);
-GMT:  });
+  });
 
   it('attaches SSL options only when SSL is enabled', () => {
     const off = buildMysqlConnectionOptions(config({ ssl: { enabled: false } }), () => 'PEM');

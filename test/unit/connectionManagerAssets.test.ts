@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import { ConnectionManager } from '../../src/connections/connectionManager';
 import { DriverRegistry } from '../../src/db/driverRegistry';
@@ -133,7 +134,7 @@ describe('ConnectionManager asset-directory threading', () => {
 
     const passed = factory.drivers[0].lastDepsAssetsDir;
     assert.ok(passed !== undefined && passed.length > 0);
-    assert.equal(require('node:path').isAbsolute(passed), true);
+    assert.equal(path.isAbsolute(passed), true);
   });
 
   it('still works end to end with the builtin registry wiring', async () => {

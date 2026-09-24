@@ -42,9 +42,12 @@ export function toSqliteError(error: unknown, fallback: DbErrorCode = 'UNKNOWN')
   const nativeCode = (error as { code?: unknown } | undefined)?.code;
   const code = typeof nativeCode === 'string' ? nativeCode : undefined;
 
+  // `classifyNativeError` returns 'UNKNOWN' — not undefined — when nothing
+  // matched, which must not short-circuit the message and fallback stages.
+  const shared = classifyNativeError(code, message);
   const classified =
     (code !== undefined ? NODE_CODE_OVERRIDES[code] : undefined) ??
-    classifyNativeError(code, message) ??
+    (shared === 'UNKNOWN' ? undefined : shared) ??
     classifySqliteMessage(message) ??
     fallback;
 

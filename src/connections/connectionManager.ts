@@ -50,7 +50,11 @@ export interface SessionStatus {
   error?: SessionError;
   connectedAt?: number;
   latencyMs?: number;
-  /** Databases visible at connect time; `undefined` when the probe failed. */
+  /**
+   * Databases visible at connect time; `undefined` when the probe failed or
+   * the engine browses a single database (the tree has no database level to
+   * badge in that case, so " · 1 db" would be noise).
+   */
   databaseCount?: number;
 }
 
@@ -206,10 +210,12 @@ export class ConnectionManager {
       }
 
       const latencyMs = await driver.ping(token).catch(() => Date.now() - started);
-      const databaseCount = await driver
-        .listDatabases(token)
-        .then((databases) => databases.length)
-        .catch(() => undefined);
+      const databaseCount = driver.capabilities.multipleDatabases
+        ? await driver
+            .listDatabases(token)
+            .then((databases) => databases.length)
+            .catch(() => undefined)
+        : undefined;
 
       session.driver = driver;
       session.status = {

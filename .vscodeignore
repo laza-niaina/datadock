@@ -9,6 +9,13 @@ test/**
 eslint.config.mjs
 esbuild.js
 tsconfig.json
+tsconfig.test.json
+
+# Compiled output of the source and the test suites
+out/**
+
+# Stray build/test logs captured at the repository root
+*.log
 
 # TypeScript sources and source maps
 **/*.ts

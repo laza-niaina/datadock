@@ -82,6 +82,7 @@ describe('toTableInfos', () => {
     assert.equal(tables[2].kind, 'table');
     assert.equal(tables[2].tableType, 'MyISAM');
   });
+});
 
 describe('isAutoIncrementColumn / toColumnInfos', () => {
   it('detects auto_increment only as a word inside EXTRA', () => {
@@ -185,6 +186,4 @@ describe('MYSQL_SQL contract', () => {
     assert.match(MYSQL_SQL.columns, /CONSTRAINT_NAME = 'PRIMARY'/);
     assert.match(MYSQL_SQL.routines, /information_schema\.ROUTINES/);
   });
-});
-
 });

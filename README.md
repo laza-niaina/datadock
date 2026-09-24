@@ -1,7 +1,8 @@
 # Database Client for VS Code
 
-A free, open database client for Visual Studio Code: browse, query and edit
-MySQL, MariaDB, PostgreSQL and SQLite databases without leaving the editor.
+A free, open database client for Visual Studio Code: explore the structure of
+your MySQL, MariaDB and SQLite databases without leaving the editor. Query
+execution and data editing are on the roadmap (see below).
 
 ## No paywall, ever
 
@@ -26,20 +27,36 @@ implemented; anything else is on the roadmap and is not advertised as working.
 - **Connection profiles** shared by every engine, with SSL/TLS and SSH tunnel
   settings (SSH tunnelling itself needs the SSH service, see roadmap).
 - **Metadata cache** with manual refresh and adjustable lifetime.
+- **MySQL and MariaDB drivers (metadata browsing)**: connect, browse databases,
+  tables, views, columns (primary keys, auto-increment, defaults, comments) and
+  stored procedures/functions, over SSL/TLS if configured.
+- **SQLite driver (metadata browsing, read-only)**: open any `.db` file, browse
+  tables, views and columns. The file is opened in memory as a snapshot and is
+  never modified; changes made by other programs appear after reconnecting.
+
+### Limitations
+
+- The drivers above are **browse-only**: running SQL statements and viewing or
+  editing table data are not implemented yet (`UNSUPPORTED_OPERATION`).
+- SQLite is loaded fully into memory; very large files can exhaust memory, and
+  the snapshot hides external changes until the profile is reconnected.
+- SSH tunnelling is not implemented yet; a profile with SSH enabled fails with a
+  clear message instead of connecting in clear text.
+- MySQL accounts using `unix_socket` or `auth_gssapi` authentication are not
+  supported.
 
 ### Roadmap
 
 Drivers are added one at a time, each with its own tests:
 
-1. MySQL / MariaDB
-2. SQLite
+1. Query execution: SQL editor, results panel, query history (MySQL/MariaDB,
+   SQLite)
+2. Table viewer with pagination, sorting, filtering and inline editing
 3. PostgreSQL
-4. SQL editor, query execution, results panel, query history
-5. Table viewer with pagination, sorting, filtering and inline editing
-6. SQL IntelliSense, snippets and formatter
-7. Import / export, backup
-8. SSH tunnelling
-9. Additional engines
+4. SQL IntelliSense, snippets and formatter
+5. Import / export, backup
+6. SSH tunnelling
+7. Additional engines
 
 ## Getting started
 

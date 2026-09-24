@@ -26,15 +26,16 @@ const PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [PRIVATE_KEY_BLOCK, `-----BEGIN PRIVATE KEY-----${MASK}-----END PRIVATE KEY-----`],
   // key=value / key: value
   [
-    /(\b(?:password|passwd|pwd|pass|secret|token|apikey|api_key|accesskey|access_key)\b\s*[=:]\s*)(["']?)([^\s,;"')\]}]+)(\2)/gi,
+    /(\b(?:password|passwd|pwd|pass|secret|token|apikey|api_key|accesskey|access_key)\b\s*[=:]\s*)(["']?)([^\s,;"')\]}&]+)(\2)/gi,
     `$1$2${MASK}$4`,
   ],
   // SQL: ... IDENTIFIED BY 'secret'
   [/(\bIDENTIFIED\s+BY\s+)(["'])([\s\S]*?)\2/gi, `$1$2${MASK}$2`],
   // SQL: ... PASSWORD 'secret'
   [/(\bPASSWORD\s+)(["'])([\s\S]*?)\2/gi, `$1$2${MASK}$2`],
-  // HTTP style header
-  [/(\bAuthorization\s*:\s*\w+\s+)(\S+)/gi, `$1${MASK}`],
+  // HTTP style header — the scheme (Bearer, Basic…) carries no secret but is
+  // masked too: over-masking is safe, under-masking is not.
+  [/(\bAuthorization\s*:\s*)\S[^\n]*/gi, `$1${MASK}`],
   // libpq / mysql style URI parameters
   [/([?&](?:password|pwd)=)([^&\s]*)/gi, `$1${MASK}`],
 ];
@@ -118,10 +119,14 @@ export class Redactor {
    * everything else is scanned with `redact`.
    */
   redactDeep<T>(value: T): T {
-    return this.walk(value, 0) as T;
+    return this.walk(value, 0, new WeakSet<object>()) as T;
   }
 
-  private walk(value: unknown, depth: number): unknown {
+  /**
+   * `ancestors` holds the objects on the current path, so a circular structure
+   * is masked instead of recursing until the depth cap.
+   */
+  private walk(value: unknown, depth: number, ancestors: WeakSet<object>): unknown {
     if (depth > 8) {
       return MASK;
     }
@@ -137,15 +142,23 @@ export class Redactor {
     if (value instanceof Error) {
       return this.redact(value.message);
     }
-    if (Array.isArray(value)) {
-      return value.map((entry) => this.walk(entry, depth + 1));
+    if (ancestors.has(value)) {
+      return MASK;
     }
-    const source = value as Record<string, unknown>;
-    const result: Record<string, unknown> = {};
-    for (const key of Object.keys(source)) {
-      result[key] = SENSITIVE_KEY.test(key) ? MASK : this.walk(source[key], depth + 1);
+    ancestors.add(value);
+    try {
+      if (Array.isArray(value)) {
+        return value.map((entry) => this.walk(entry, depth + 1, ancestors));
+      }
+      const source = value as Record<string, unknown>;
+      const result: Record<string, unknown> = {};
+      for (const key of Object.keys(source)) {
+        result[key] = SENSITIVE_KEY.test(key) ? MASK : this.walk(source[key], depth + 1, ancestors);
+      }
+      return result;
+    } finally {
+      ancestors.delete(value);
     }
-    return result;
   }
 }
 

@@ -36,7 +36,7 @@ const CAPABILITIES: DriverCapabilities = {
 
 /** Deterministic driver double; records every call so tests can assert on them. */
 class FakeDriver implements DatabaseDriver {
-  readonly capabilities: DriverCapabilities = CAPABILITIES;
+  readonly capabilities: DriverCapabilities;
   readonly engine: EngineId;
 
   connectCalls = 0;
@@ -51,8 +51,9 @@ class FakeDriver implements DatabaseDriver {
   pingLatencyMs = 7;
   lastConfig: ConnectionConfig | undefined;
 
-  constructor(engine: EngineId = 'mysql') {
+  constructor(engine: EngineId = 'mysql', capabilities: DriverCapabilities = CAPABILITIES) {
     this.engine = engine;
+    this.capabilities = capabilities;
   }
 
   async connect(_token?: CancelToken): Promise<void> {
@@ -120,10 +121,11 @@ class FakeFactory implements DriverFactory {
 
   readonly drivers: FakeDriver[] = [];
   validateProblems: string[] = [];
+  driverCapabilities: DriverCapabilities = CAPABILITIES;
   lastValidateConfig: ConnectionConfig | undefined;
 
   create(config: ConnectionConfig): DatabaseDriver {
-    const driver = new FakeDriver(this.engine);
+    const driver = new FakeDriver(this.engine, this.driverCapabilities);
     driver.lastConfig = config;
     this.drivers.push(driver);
     return driver;
@@ -191,6 +193,13 @@ describe('ConnectionManager: connecting', () => {
     assert.equal(status?.databaseCount, 2);
     assert.equal(typeof status?.connectedAt, 'number');
     assert.equal(status?.error, undefined);
+  });
+
+  it('hides the database count for single-database engines', async () => {
+    const { manager, factory } = setup();
+    factory.driverCapabilities = { ...CAPABILITIES, multipleDatabases: false };
+    await manager.connect(config('a'));
+    assert.equal(manager.statusOf('a')?.databaseCount, undefined);
   });
 
   it('throws CONNECTION_LOST when the profile is not connected', () => {

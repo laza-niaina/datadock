@@ -160,6 +160,14 @@ export function isAutoIncrementColumn(extra: unknown): boolean {
   return typeof extra === 'string' && /\bauto_increment\b/i.test(extra);
 }
 
+/**
+ * `IS_NULLABLE` is the string 'YES'/'NO' in information_schema, not a `1`/`0`
+ * boolean column, so `toBool` would read 'YES' as false.
+ */
+function toNullable(value: unknown): boolean {
+  return typeof value === 'string' ? value.trim().toUpperCase() !== 'NO' : toBool(value);
+}
+
 export function toColumnInfos(rows: readonly MysqlRow[]): ColumnInfo[] {
   const columns: ColumnInfo[] = [];
   rows.forEach((row, index) => {
@@ -171,7 +179,7 @@ export function toColumnInfos(rows: readonly MysqlRow[]): ColumnInfo[] {
     columns.push({
       name,
       dataType: text(row['columnType']) ?? text(row['dataType']) ?? 'UNKNOWN',
-      nullable: toBool(row['isNullable']),
+      nullable: toNullable(row['isNullable']),
       isPrimaryKey: toBool(row['isPrimaryKey']),
       isAutoIncrement: isAutoIncrementColumn(row['extra']),
       defaultValue:

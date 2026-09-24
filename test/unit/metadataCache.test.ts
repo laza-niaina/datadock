@@ -57,8 +57,8 @@ describe('MetadataCache: basic behaviour', () => {
 
     cache.set('b', 2);
     time.advance(1_500);
-    assert.equal(cache.get('b'), undefined);
-    assert.equal(cache.get('a'), 1, 'the pre-existing entry keeps its earlier deadline');
+    assert.equal(cache.get('a'), undefined, 'the pre-existing entry keeps its earlier deadline');
+    assert.equal(cache.get('b'), 2);
   });
 });
 
