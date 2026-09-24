@@ -129,17 +129,14 @@ export function activate(context: vscode.ExtensionContext): void {
     return { name: profile.name, engine: profile.engine, database };
   });
 
-  // Status bar: one visual unit made of two adjacent items - the connection
-  // (or "Connect"), then the engine and the active database. Both only exist
-  // for the active .sql editor, so switching files swaps the context shown.
-  const sqlConnectionStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 62);
-  const sqlDatabaseStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 61);
+  // Status bar: a single item showing the complete per-file SQL context.
+  // Click opens a menu to change connection, change database, or disconnect.
+  const sqlStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 62);
 
   const refreshSqlStatus = async (): Promise<void> => {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.languageId !== 'sql') {
-      sqlConnectionStatus.hide();
-      sqlDatabaseStatus.hide();
+      sqlStatusBar.hide();
       return;
     }
     const uri = editor.document.uri;
@@ -152,26 +149,21 @@ export function activate(context: vscode.ExtensionContext): void {
     const labels = sqlStatusLabels({ connectionName: profile?.name, engine: profile?.engine, database });
 
     if (!profile) {
-      sqlConnectionStatus.text = labels.connection;
-      sqlConnectionStatus.tooltip = 'Select a DataDock connection for this SQL file.';
-      sqlConnectionStatus.command = 'dbclient.query.selectConnection';
-      sqlConnectionStatus.show();
-      sqlDatabaseStatus.hide();
+      sqlStatusBar.text = labels.connection; // "$(database) Connect"
+      sqlStatusBar.tooltip = 'Select a DataDock connection for this SQL file.';
+      sqlStatusBar.command = 'dbclient.query.selectConnection';
+      sqlStatusBar.show();
       return;
     }
 
-    sqlConnectionStatus.text = labels.connection;
-    sqlConnectionStatus.tooltip = 'DataDock connection used for this SQL file. Click to change it.';
-    sqlConnectionStatus.command = 'dbclient.query.selectConnection';
-    sqlConnectionStatus.show();
-
-    sqlDatabaseStatus.text = labels.database ?? '';
-    sqlDatabaseStatus.tooltip =
-      typeof database === 'string' && database.length > 0
-        ? 'Active database for this SQL file. Click to change it.'
-        : 'No database selected yet. Click to choose one.';
-    sqlDatabaseStatus.command = 'dbclient.query.selectDatabase';
-    sqlDatabaseStatus.show();
+    // Single combined label: $(database) : Local MariaDB $(server) MariaDB : learn
+    const combinedText = labels.database
+      ? `${labels.connection} ${labels.database}`
+      : `${labels.connection} $(server) Select DB`;
+    sqlStatusBar.text = combinedText;
+    sqlStatusBar.tooltip = 'DataDock context for this SQL file. Click to change connection or database.';
+    sqlStatusBar.command = 'dbclient.query.manageContext';
+    sqlStatusBar.show();
   };
 
   const refreshSqlLenses = (): void => {
@@ -182,8 +174,7 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   context.subscriptions.push(
-    sqlConnectionStatus,
-    sqlDatabaseStatus,
+    sqlStatusBar,
     vscode.languages.registerCodeLensProvider({ language: 'sql' }, sqlCodeLens),
     vscode.window.onDidChangeActiveTextEditor(() => {
       void refreshSqlStatus();

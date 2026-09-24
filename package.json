@@ -153,10 +153,20 @@
         "icon": "$(database)"
       },
       {
+        "command": "dbclient.query.manageContext",
+        "title": "Manage SQL File Context",
+        "category": "DataDock"
+      },
+      {
         "command": "dbclient.query.runStatement",
         "title": "Run This Query",
         "category": "DataDock",
         "icon": "$(play)"
+      },
+      {
+        "command": "dbclient.query.manageContext",
+        "title": "Manage Context for SQL File",
+        "category": "DataDock"
       },
       {
         "command": "dbclient.table.view",
@@ -364,6 +374,10 @@
         },
         {
           "command": "dbclient.query.selectDatabase",
+          "when": "editorLangId == sql"
+        },
+        {
+          "command": "dbclient.query.manageContext",
           "when": "editorLangId == sql"
         },
         {

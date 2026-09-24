@@ -96,14 +96,16 @@ async function pickProfile(services: CommandServices, title: string): Promise<Co
 }
 
 /**
- * Guarantees a run target has an active database before a batch executes, so a
- * MySQL/MariaDB connection without a default database never fails with the raw
- * server error "No database selected".
+ * Completes the first-time configuration of a SQL file by guaranteeing the
+ * freshly-picked connection has an active database, so a MySQL/MariaDB
+ * connection without a default database never fails with the raw server error
+ * "No database selected".
  *
- * The effective database is the file override, else the profile default. When
- * neither exists on a multi-database engine, the user is asked to pick one; the
- * choice is remembered for the file (`fileUri`) and the returned override is
- * applied as the batch's implicit session context (visible nowhere).
+ * Only called right after the connection QuickPick (new file). The effective
+ * database is the file override, else the profile default. When neither exists
+ * on a multi-database engine, the user is asked to pick one; the choice is
+ * remembered for the file (`fileUri`) and the returned override is applied as
+ * the batch's implicit session context (visible nowhere).
  */
 export interface RunDatabaseResolution {
   /** True when the batch must be aborted (no database could be chosen). */
@@ -152,8 +154,13 @@ async function ensureRunDatabase(
 /**
  * Resolves the connection for an editor: an explicit tree node wins, then the
  * remembered per-file association, otherwise a QuickPick that is persisted so
- * later runs on the same file need no question. Finally guarantees the target
- * has an active database (asking the user when none is configured).
+ * later runs on the same file need no question.
+ *
+ * Selectors appear ONLY while the file is being configured for the first time.
+ * A run on a file that already has an association (or on an explicit tree
+ * node) never re-opens a picker: the stored database override — or the
+ * profile/session default when none is configured — scopes the batch
+ * implicitly, and a user-written `USE` inside the SQL still works.
  */
 async function pickTargetForDocument(
   services: CommandServices,
@@ -165,15 +172,18 @@ async function pickTargetForDocument(
 
   let override: string | undefined;
   let profile: ConnectionProfile | undefined;
+  let hadContext = false;
 
   const directId = connectionIdOf(node);
   if (directId) {
     profile = await services.store.get(directId);
+    hadContext = true;
   } else {
     const association = state.getAssociation(uri);
     if (association) {
       override = association.database;
       profile = await services.store.get(association.connectionId);
+      hadContext = true;
     }
   }
 
@@ -187,8 +197,12 @@ async function pickTargetForDocument(
   }
 
   const target = await ensureDriver(services, profile);
-  const fileScoped = connectionIdOf(node) === undefined;
-  const resolution = await ensureRunDatabase(target, fileScoped ? uri : undefined, override);
+  if (hadContext) {
+    return { ...target, database: override };
+  }
+  // First-time configuration of a brand-new SQL file: the connection was just
+  // picked, so the database question completes the flow and is remembered.
+  const resolution = await ensureRunDatabase(target, uri, override);
   if (resolution.aborted) {
     return undefined;
   }
@@ -659,5 +673,98 @@ export function registerQueryCommands(register: Register, services: CommandServi
       ref: node.ref,
       title: `${node.ref.database}.${node.ref.table}`,
     });
+  });
+
+  /**
+   * Opens a menu to manage the SQL file's connection/database context.
+   * Replaces the two separate status bar clicks with a single unified action.
+   */
+  register('dbclient.query.manageContext', async (uriArg?: unknown) => {
+    const editor = vscode.window.activeTextEditor;
+    const activeUri =
+      uriArg instanceof vscode.Uri
+        ? uriArg
+        : typeof uriArg === 'string' && uriArg.length > 0
+        ? vscode.Uri.parse(uriArg)
+        : editor?.document.uri;
+    if (!activeUri) {
+      void vscode.window.showInformationMessage('Open a .sql document before managing the DataDock context.');
+      return;
+    }
+    if (uriArg instanceof vscode.Uri || typeof uriArg === 'string') {
+      try {
+        const candidate = await vscode.workspace.openTextDocument(activeUri);
+        if (candidate.languageId !== 'sql') {
+          void vscode.window.showInformationMessage('Open a .sql document before managing the DataDock context.');
+          return;
+        }
+      } catch {
+        void vscode.window.showInformationMessage('The SQL document could not be opened.');
+        return;
+      }
+    } else if (editor && editor.document.languageId !== 'sql') {
+      void vscode.window.showInformationMessage('Open a .sql document before managing the DataDock context.');
+      return;
+    }
+
+    const state = sqlFileAssociations();
+    const association = state.getAssociation(activeUri);
+    const hasConnection = !!association;
+    const profiles = await services.store.list();
+
+    const items: { label: string; description?: string; action: 'connection' | 'database' | 'disconnect' }[] = [];
+
+    if (hasConnection && association) {
+      const profile = await services.store.get(association.connectionId);
+      if (profile) {
+        items.push({
+          label: '$(pencil) Change Connection',
+          description: `Current: ${profile.name}`,
+          action: 'connection',
+        });
+        if (profile.engine !== 'sqlite') {
+          const currentDb = association.database ?? profile.database;
+          items.push({
+            label: '$(database) Change Database',
+            description: currentDb ? `Current: ${currentDb}` : 'No database selected',
+            action: 'database',
+          });
+        }
+        items.push({
+          label: '$(trash) Disconnect',
+          description: `Remove context for this file`,
+          action: 'disconnect',
+        });
+      }
+    } else {
+      if (profiles.length === 0) {
+        void vscode.window.showInformationMessage('Create a DataDock connection first.');
+        return;
+      }
+      items.push({
+        label: '$(plug) Select Connection',
+        description: 'Choose a connection for this SQL file',
+        action: 'connection',
+      });
+    }
+
+    const picked = await vscode.window.showQuickPick(items, {
+      title: 'DataDock: manage context for this SQL file',
+      placeHolder: hasConnection ? 'Choose an action' : 'Select a connection',
+    });
+
+    if (!picked) {
+      return;
+    }
+
+    if (picked.action === 'connection') {
+      // Reuse the existing selectConnection logic
+      await vscode.commands.executeCommand('dbclient.query.selectConnection', activeUri);
+    } else if (picked.action === 'database') {
+      await vscode.commands.executeCommand('dbclient.query.selectDatabase', activeUri);
+    } else if (picked.action === 'disconnect') {
+      await state.set(activeUri, undefined);
+      void vscode.window.showInformationMessage('DataDock context cleared for this SQL file.');
+    }
   });
 }
