@@ -1,8 +1,9 @@
-# Database Client for VS Code
+# DataDock for VS Code
 
-A free, open database client for Visual Studio Code: explore the structure of
-your MySQL, MariaDB and SQLite databases without leaving the editor. Query
-execution and data editing are on the roadmap (see below).
+DataDock is a free, open database tooling extension for Visual Studio Code:
+explore the structure of your MySQL, MariaDB and SQLite databases without
+leaving the editor. Query execution and data editing are on the roadmap (see
+below).
 
 ## No paywall, ever
 
@@ -60,7 +61,7 @@ Drivers are added one at a time, each with its own tests:
 
 ## Getting started
 
-1. Open the **Database Client** view in the activity bar.
+1. Open the **DataDock** view in the activity bar.
 2. Click the **+** button to add a connection.
 3. Fill in the form and press **Test Connection**, then **Save**.
 4. Right-click the connection and choose **Connect**.

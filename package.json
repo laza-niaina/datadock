@@ -1,7 +1,7 @@
 {
   "name": "database-client-free",
-  "displayName": "Database Client (Free)",
-  "description": "Database client for VS Code: explore MySQL, MariaDB and SQLite databases. Every feature is free, with no account, no telemetry and no connection limit.",
+  "displayName": "DataDock",
+  "description": "DataDock: a free database tooling extension for VS Code to explore MySQL, MariaDB and SQLite databases. No account, no telemetry and no connection limit.",
   "version": "0.1.0",
   "license": "MIT",
   "publisher": "dbclient",
@@ -48,7 +48,7 @@
       "activitybar": [
         {
           "id": "dbclient",
-          "title": "Database Client",
+          "title": "DataDock",
           "icon": "resources/dbclient.svg"
         }
       ]
@@ -58,92 +58,92 @@
         {
           "id": "dbclient.explorer",
           "name": "Connections",
-          "contextualTitle": "Database Client"
+          "contextualTitle": "DataDock"
         }
       ]
     },
     "viewsWelcome": [
       {
         "view": "dbclient.explorer",
-        "contents": "No database connections yet.\n[Add Connection](command:dbclient.connection.add)\n\nConnections are limited only by your machine and the database server. There is no account, no quota and no premium tier."
+        "contents": "No DataDock connections yet.\n[Add Connection](command:dbclient.connection.add)\n\nConnections are limited only by your machine and the database server. There is no account, no quota and no premium tier."
       }
     ],
     "commands": [
       {
         "command": "dbclient.connection.add",
         "title": "Add Connection",
-        "category": "Database Client",
+        "category": "DataDock",
         "icon": "$(add)"
       },
       {
         "command": "dbclient.connection.edit",
         "title": "Edit Connection",
-        "category": "Database Client",
+        "category": "DataDock",
         "icon": "$(edit)"
       },
       {
         "command": "dbclient.connection.duplicate",
         "title": "Duplicate Connection",
-        "category": "Database Client",
+        "category": "DataDock",
         "icon": "$(copy)"
       },
       {
         "command": "dbclient.connection.delete",
         "title": "Delete Connection",
-        "category": "Database Client",
+        "category": "DataDock",
         "icon": "$(trash)"
       },
       {
         "command": "dbclient.connection.connect",
         "title": "Connect",
-        "category": "Database Client",
+        "category": "DataDock",
         "icon": "$(plug)"
       },
       {
         "command": "dbclient.connection.disconnect",
         "title": "Disconnect",
-        "category": "Database Client",
+        "category": "DataDock",
         "icon": "$(debug-disconnect)"
       },
       {
         "command": "dbclient.connection.reconnect",
         "title": "Reconnect",
-        "category": "Database Client",
+        "category": "DataDock",
         "icon": "$(debug-restart)"
       },
       {
         "command": "dbclient.connection.copyName",
         "title": "Copy Connection Name",
-        "category": "Database Client"
+        "category": "DataDock"
       },
       {
         "command": "dbclient.explorer.refresh",
         "title": "Refresh",
-        "category": "Database Client",
+        "category": "DataDock",
         "icon": "$(refresh)"
       },
       {
         "command": "dbclient.explorer.showOutput",
         "title": "Show Output Log",
-        "category": "Database Client",
+        "category": "DataDock",
         "icon": "$(output)"
       },
       {
         "command": "dbclient.explorer.clearCache",
         "title": "Clear Metadata Cache",
-        "category": "Database Client",
+        "category": "DataDock",
         "icon": "$(clear-all)"
       },
       {
         "command": "dbclient.node.copyName",
         "title": "Copy Name",
-        "category": "Database Client",
+        "category": "DataDock",
         "icon": "$(clippy)"
       },
       {
         "command": "dbclient.node.refresh",
         "title": "Refresh",
-        "category": "Database Client",
+        "category": "DataDock",
         "icon": "$(refresh)"
       }
     ],
@@ -257,7 +257,7 @@
       ]
     },
     "configuration": {
-      "title": "Database Client",
+      "title": "DataDock",
       "properties": {
         "dbclient.metadata.cacheTtlSeconds": {
           "type": "number",
@@ -275,7 +275,7 @@
             "trace"
           ],
           "default": "info",
-          "description": "Verbosity of the Database Client output channel. Passwords and private keys are never written to the log regardless of this setting."
+          "description": "Verbosity of the DataDock output channel. Passwords and private keys are never written to the log regardless of this setting."
         }
       }
     }

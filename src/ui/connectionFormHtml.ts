@@ -584,7 +584,7 @@ export function renderConnectionFormHtml(webview: vscode.Webview): string {
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Connection</title>
+  <title>DataDock — Connection</title>
   <style nonce="${nonce}">${BASE_STYLES}</style>
 </head>
 <body>

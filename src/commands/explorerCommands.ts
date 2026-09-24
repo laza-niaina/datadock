@@ -32,7 +32,7 @@ export function registerExplorerCommands(register: Register, services: CommandSe
     const removed = services.cache.invalidate();
     services.logger.info('Metadata cache cleared.', { entries: removed });
     void vscode.window.showInformationMessage(
-      `Database Client: cleared ${removed} cached metadata ${removed === 1 ? 'entry' : 'entries'}.`,
+      `DataDock: cleared ${removed} cached metadata ${removed === 1 ? 'entry' : 'entries'}.`,
     );
   });
 

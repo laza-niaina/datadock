@@ -34,7 +34,7 @@ export class OutputLogger implements Logger, vscode.Disposable {
 
   constructor(
     private readonly redactor: Redactor = globalRedactor,
-    title = 'Database Client',
+    title = 'DataDock',
   ) {
     this.channel = vscode.window.createOutputChannel(title);
   }

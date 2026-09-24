@@ -36,7 +36,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerBuiltinDrivers(driverRegistry);
 
   const engines = driverRegistry.all().map((factory) => factory.engine);
-  logger.info(`Database Client activating. VS Code ${vscode.version}.`, {
+  logger.info(`DataDock activating. VS Code ${vscode.version}.`, {
     drivers: engines,
     connectionLimit: 'none',
   });
