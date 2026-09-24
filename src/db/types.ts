@@ -360,6 +360,14 @@ export interface DatabaseDriver {
 
   execute(sql: string, token?: CancelToken): Promise<QueryExecutionResult>;
 
+  /**
+   * Scopes the live session to a database without exposing a user-visible
+   * statement (multi-database engines). The database chosen for a SQL file
+   * becomes the connection's implicit run context: it must never be rendered
+   * as an extra statement or counted in a batch result.
+   */
+  selectDatabase?(database: string, token?: CancelToken): Promise<void>;
+
   getTableData(ref: TableRef, request: TableDataRequest, token?: CancelToken): Promise<TableDataPage>;
   countRows?(ref: TableRef, token?: CancelToken): Promise<number>;
 

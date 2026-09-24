@@ -19,9 +19,8 @@ import { basename } from 'node:path';
 import * as vscode from 'vscode';
 import { DbError } from '../db/errors';
 import type { ConnectionProfile, DatabaseDriver, QueryExecutionResult } from '../db/types';
-import { quoteMysqlIdentifier } from '../db/drivers/mysql/mysqlDriver';
 import { RelationNode } from '../explorer/nodes';
-import { sqlFileAssociations } from '../sql/sqlFileState';
+import { sqlFileAssociations, type SqlFileAssociation } from '../sql/sqlFileState';
 import { splitSqlStatements, statementAtOffset, type SqlStatement } from '../sql/sqlStatements';
 import { QueryResultPanel, type QueryStatementDisplay } from '../ui/queryResultPanel';
 import { TableViewerPanel } from '../ui/tableViewerPanel';
@@ -103,8 +102,8 @@ async function pickProfile(services: CommandServices, title: string): Promise<Co
  *
  * The effective database is the file override, else the profile default. When
  * neither exists on a multi-database engine, the user is asked to pick one; the
- * choice is remembered for the file (`fileUri`) and the returned override
- * makes `runStatements` inject a `USE` statement for the batch.
+ * choice is remembered for the file (`fileUri`) and the returned override is
+ * applied as the batch's implicit session context (visible nowhere).
  */
 export interface RunDatabaseResolution {
   /** True when the batch must be aborted (no database could be chosen). */
@@ -200,6 +199,61 @@ function catchTargetError(error: unknown): void {
   void vscode.window.showErrorMessage(`DataDock connection failed: ${userMessage(error)}`);
 }
 
+/**
+ * Opens the database picker for an existing per-file association and persists
+ * the chosen database as the file's override. Engines without multiple
+ * databases are skipped silently (SQLite keeps its file as the database);
+ * `informNonMulti` decides whether that case is explained to the user instead.
+ */
+async function pickAndSetDatabase(
+  services: CommandServices,
+  uri: vscode.Uri,
+  association: SqlFileAssociation,
+  informNonMulti: boolean,
+): Promise<void> {
+  const profile = await services.store.get(association.connectionId);
+  if (!profile) {
+    void vscode.window.showInformationMessage('The connection for this SQL file no longer exists.');
+    return;
+  }
+  let target: QueryTarget | undefined;
+  try {
+    target = await ensureDriver(services, profile);
+  } catch (error) {
+    catchTargetError(error);
+    return;
+  }
+  if (!target?.driver.capabilities.multipleDatabases) {
+    if (informNonMulti) {
+      void vscode.window.showInformationMessage(
+        `${profile.engine === 'sqlite' ? 'SQLite' : engineLabel(profile.engine)} uses its file as the database; nothing to select.`,
+      );
+    }
+    return;
+  }
+  let databases: string[];
+  try {
+    databases = await target.driver.listDatabases();
+  } catch (error) {
+    catchTargetError(error);
+    return;
+  }
+  const current = association.database ?? profile.database;
+  const picked = await vscode.window.showQuickPick(
+    databases.map((database) => ({
+      label: database === current ? `${database} (current)` : database,
+      database,
+    })),
+    { title: 'DataDock: database for this SQL file', placeHolder: 'Database' },
+  );
+  if (!picked) {
+    return;
+  }
+  await sqlFileAssociations().setDatabase(uri, picked.database);
+  services.cache.invalidate(`profile:${profile.id}`);
+  void vscode.window.showInformationMessage(`This SQL file will use database '${picked.database}'.`);
+}
+
 function toRunnableStatements(statements: readonly SqlStatement[], baseOffset: number): RunnableStatement[] {
   return statements.map((statement) => ({
     text: statement.text,
@@ -232,9 +286,9 @@ export async function revealSqlRange(uri: vscode.Uri, start: number, end: number
  * batch result panel. Stops at the first failure; the remaining statements are
  * marked as skipped so the user sees exactly where the batch halted.
  *
- * When the file remembers a database override (`defaultDatabase`) for a
- * MySQL/MariaDB connection, a `USE` statement is executed first so unqualified
- * names resolve against the chosen database.
+ * The file's active database is applied implicitly first (through the driver's
+ * `selectDatabase`, never rendered as a statement) so unqualified names resolve
+ * against the chosen database without an artificial `USE` in the results.
  */
 async function runStatements(
   services: CommandServices,
@@ -245,18 +299,23 @@ async function runStatements(
   defaultDatabase?: string,
 ): Promise<void> {
   const statements: RunnableStatement[] = [...items];
-  const mysqlFamily = target.profile.engine === 'mysql' || target.profile.engine === 'mariadb';
+  // The database for this file (override first, profile default second) is the
+  // session context, not a statement: scoping happens inside the driver and the
+  // batch contains only what the user wrote. Without a configured database the
+  // socket keeps the profile default scoping.
+  const effectiveDatabase = defaultDatabase ?? target.profile.database;
   if (
-    mysqlFamily &&
-    typeof defaultDatabase === 'string' &&
-    defaultDatabase.length > 0 &&
-    defaultDatabase !== target.profile.database
+    target.driver.capabilities.multipleDatabases &&
+    typeof target.driver.selectDatabase === 'function' &&
+    typeof effectiveDatabase === 'string' &&
+    effectiveDatabase.length > 0
   ) {
-    statements.unshift({
-      text: `USE ${quoteMysqlIdentifier(defaultDatabase)}`,
-      start: 0,
-      end: 0,
-    });
+    try {
+      await target.driver.selectDatabase(effectiveDatabase);
+    } catch (error) {
+      catchTargetError(error);
+      return;
+    }
   }
   await vscode.window.withProgress(
     {
@@ -334,7 +393,7 @@ async function runStatements(
           key: `sql:${uri.toString()}`,
           panelTitle: `DataDock - ${basename(uri.fsPath) || 'Query Result'}`,
           connectionName: target.profile.name,
-          database: target.profile.database,
+          database: defaultDatabase ?? target.profile.database,
           durationMs,
           notices: [],
           statements: displays,
@@ -534,45 +593,7 @@ export function registerQueryCommands(register: Register, services: CommandServi
       await state.set(activeUri, picked.id);
       association = { connectionId: picked.id, database: undefined };
     }
-    const profile = await services.store.get(association.connectionId);
-    if (!profile) {
-      void vscode.window.showInformationMessage('The connection for this SQL file no longer exists.');
-      return;
-    }
-    let target: QueryTarget | undefined;
-    try {
-      target = await ensureDriver(services, profile);
-    } catch (error) {
-      catchTargetError(error);
-      return;
-    }
-    if (!target?.driver.capabilities.multipleDatabases) {
-      void vscode.window.showInformationMessage(
-        `${profile.engine === 'sqlite' ? 'SQLite' : engineLabel(profile.engine)} uses its file as the database; nothing to select.`,
-      );
-      return;
-    }
-    let databases: string[];
-    try {
-      databases = await target.driver.listDatabases();
-    } catch (error) {
-      catchTargetError(error);
-      return;
-    }
-    const current = association.database ?? profile.database;
-    const picked = await vscode.window.showQuickPick(
-      databases.map((database) => ({
-        label: database === current ? `${database} (current)` : database,
-        database,
-      })),
-      { title: 'DataDock: database for this SQL file', placeHolder: 'Database' },
-    );
-    if (!picked) {
-      return;
-    }
-    await state.setDatabase(activeUri, picked.database);
-    services.cache.invalidate(`profile:${profile.id}`);
-    void vscode.window.showInformationMessage(`This SQL file will use database '${picked.database}'.`);
+    await pickAndSetDatabase(services, activeUri, association, true);
   });
 
   register('dbclient.query.selectConnection', async (uriOrNode?: unknown) => {
@@ -621,6 +642,10 @@ export function registerQueryCommands(register: Register, services: CommandServi
     }
     await state.set(activeUri, picked.profile.id);
     void vscode.window.showInformationMessage(`This SQL file will use '${picked.profile.name}'.`);
+    // Database Client-style flow: a connection pick is followed immediately by
+    // the database picker so the file gets a full run context in one step.
+    // Engines without multiple databases (SQLite) are skipped silently.
+    await pickAndSetDatabase(services, activeUri, { connectionId: picked.profile.id, database: undefined }, false);
   });
 
   register('dbclient.table.view', (node?: unknown) => {

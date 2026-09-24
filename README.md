@@ -37,10 +37,13 @@ implemented; anything else is on the roadmap and is not advertised as working.
   line separates two statements only when the first one has no `;`; a plain line
   break never splits a statement. Clickable CodeLens actions sit above every
   statement (run all, run that statement, pick the connection and the active
-  database). When the connection has no default database, running a query asks
-  you to pick one (remembered for the file) instead of failing with a server
-  error. The status bar shows the file's connection and the active
-  engine/database; click either to change them.
+  database). Choosing a connection opens the database picker automatically, and
+  when the connection has no default database, running a query asks you to pick
+  one (remembered for the file) instead of failing with a server error. The
+  chosen database is applied as the file's run context behind the scenes: no
+  `USE` statement is ever added to your queries or shown in the results. The
+  status bar shows the file's connection and the active engine/database; click
+  either to change them.
 - **Rich query results**: per-statement status (ok / error / skipped), columns
   with types, `NULL` highlighting, row counts, affected rows for
   INSERT/UPDATE/DELETE, run times, and an error banner that lets you jump back
@@ -104,7 +107,9 @@ Drivers are added one at a time, each with its own tests:
    batch stops at the first error and the rest are marked as skipped. Statements
    are separated by `;` or, when a statement has no `;`, by a blank line. If the
    connection has no default database, DataDock asks you to choose the database
-   the first time (the choice is remembered for this file) before running.
+   the first time (the choice is remembered for this file) before running. The
+   chosen database is the run context: it is applied behind the scenes and never
+   appears as an extra statement in the results.
 4. Click a table or view in the explorer to open the table viewer. Use Previous/Next, Search and column headers to navigate; editing controls appear only after row-editing support is implemented.
 
 ## Security

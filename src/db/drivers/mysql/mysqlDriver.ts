@@ -93,6 +93,34 @@ function firstSqlKeyword(sql: string): string {
   return withoutLineComment.trim().match(/^([a-z]+)/i)?.[1].toUpperCase() ?? '';
 }
 
+/**
+ * Parses the database name targeted by a leading `USE` statement, or undefined
+ * when the statement does not switch databases. Keeps the driver's active-
+ * database tracker in sync when the user writes an explicit `USE` themselves.
+ */
+export function useDatabaseTargetFrom(sql: string): string | undefined {
+  if (firstSqlKeyword(sql) !== 'USE') {
+    return undefined;
+  }
+  const withoutBlockComments = sql.replace(/^\s*\/\*[\s\S]*?\*\/\s*/, '');
+  const withoutLineComment = withoutBlockComments.replace(/^\s*--[^\r\n]*(?:\r?\n|$)/, '');
+  const rest = withoutLineComment.trim().replace(/^USE\s+/i, '').trim();
+  if (rest === '') {
+    return undefined;
+  }
+  // "USE" alone (no whitespace after the keyword) means no switch; never
+  // misread the keyword itself as a database name.
+  if (firstSqlKeyword(rest) === 'USE') {
+    return undefined;
+  }
+  const quoted = rest.match(/^`((?:``|[^`])*)`/);
+  if (quoted) {
+    return quoted[1].replace(/``/g, '`') || undefined;
+  }
+  const bare = rest.match(/^([^\s;]+)/);
+  return bare ? bare[1] : undefined;
+}
+
 /** Conservative guard used only for a profile explicitly marked read-only. */
 function isReadOnlySql(sql: string): boolean {
   // Reject mutation keywords anywhere in the submitted batch. This is
@@ -139,6 +167,8 @@ export class MySqlDriver implements DatabaseDriver {
   private readonly config: ConnectionConfig;
   private readonly logger: Logger;
   private connection?: Connection;
+  /** Database the live session is currently scoped to; drives the implicit-context short-circuit. */
+  private activeDatabase: string | undefined;
 
   constructor(engine: 'mysql' | 'mariadb', config: ConnectionConfig, deps: DriverDeps) {
     this.engine = engine;
@@ -174,6 +204,7 @@ export class MySqlDriver implements DatabaseDriver {
       }
       this.attachErrorLogger(connection);
       this.connection = connection;
+      this.activeDatabase = this.config.profile.database?.trim() || undefined;
     } catch (error) {
       connection?.destroy();
       if (error instanceof DbError) {
@@ -258,6 +289,12 @@ export class MySqlDriver implements DatabaseDriver {
 
     const started = Date.now();
     const [rawResult, rawFields] = await this.runQuery(sql, [], token, 'QUERY_ERROR');
+    // A user-written leading USE changes the session scope; keep the tracker in
+    // sync so the next implicit selectDatabase() still lands on the file's base.
+    const useTarget = useDatabaseTargetFrom(sql);
+    if (useTarget !== undefined) {
+      this.activeDatabase = useTarget;
+    }
     const fields = queryFields(rawFields);
     const resultSet: QueryResultSet = {
       statementIndex: 0,
@@ -290,6 +327,20 @@ export class MySqlDriver implements DatabaseDriver {
       durationMs,
       notices: [],
     };
+  }
+
+  /**
+   * Scopes the session to `database` with an implicit `USE` that never reaches
+   * the result panel and never counts as a statement. Skipped when the session
+   * already sits on that database, so repeated runs add no round trip.
+   */
+  async selectDatabase(database: string, token: CancelToken = NEVER_CANCELLED): Promise<void> {
+    const target = database?.trim();
+    if (!target || target === this.activeDatabase) {
+      return;
+    }
+    await this.runQuery(`USE ${quoteMysqlIdentifier(target)}`, [], token, 'QUERY_ERROR');
+    this.activeDatabase = target;
   }
 
   async getTableData(
