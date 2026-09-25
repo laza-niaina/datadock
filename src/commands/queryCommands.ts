@@ -413,6 +413,7 @@ async function runStatements(
           panelTitle: `DataDock - ${basename(uri.fsPath) || 'Query Result'}`,
           connectionName: target.profile.name,
           database: defaultDatabase ?? target.profile.database,
+          engine: target.profile.engine,
           durationMs,
           notices: [],
           statements: displays,
@@ -682,6 +683,7 @@ export function registerQueryCommands(register: Register, services: CommandServi
       manager: services.manager,
       logger: services.logger,
       ref: node.ref,
+      engine: services.manager.getDriver(node.ref.connectionId)?.engine,
       title: `${node.ref.database}.${node.ref.table}`,
     });
   });

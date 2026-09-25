@@ -25,6 +25,7 @@ import {
   type ConnectionFormModel,
   type EngineChoice,
 } from './connectionFormHtml';
+import { getEngineIcon } from './icons';
 
 /** Messages sent from the webview to the extension host. */
 type InboundMessage =
@@ -176,6 +177,7 @@ export class ConnectionFormPanel {
       return available.map((factory) => ({
         id: factory.engine,
         label: factory.label,
+        logo: getEngineIcon(factory.engine).svg,
         status: factory.status,
         defaultPort: factory.defaultPort,
         fileBased: factory.fileBased,
@@ -187,6 +189,7 @@ export class ConnectionFormPanel {
       {
         id: this.baseProfile.engine,
         label: `${this.baseProfile.engine} (driver unavailable)`,
+        logo: getEngineIcon(this.baseProfile.engine).svg,
         status: 'planned',
         fileBased: false,
       },

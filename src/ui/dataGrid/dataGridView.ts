@@ -19,6 +19,20 @@
 import { randomBytes } from 'node:crypto';
 import type { GridCell, GridColumn, GridFilter, GridSort, GridExportFormat } from './dataGridModel';
 import { GRID_PAGE_SIZE } from './dataGridModel';
+import type { EngineId } from '../../db/types';
+import { engineLabel } from '../../util/engineDisplay';
+import {
+  getEngineIcon,
+  iconArrowRight,
+  iconChevron,
+  iconClose,
+  iconCopy,
+  iconDot,
+  iconFunnel,
+  iconRefresh,
+  iconReveal,
+  iconTranspose,
+} from '../icons';
 
 /** One grid the page can show (query batches have several, tables one). */
 export interface GridViewGrid {
@@ -63,6 +77,8 @@ export interface DataGridViewOptions {
   readonly totalRows?: number;
   /** Static toolbar duration text, e.g. `Cost: 12ms`. */
   readonly cost?: string;
+  /** Engine whose brand mark is shown in the toolbar, when known. */
+  readonly engine?: EngineId;
   readonly exportFormats?: readonly GridExportFormat[];
 }
 
@@ -110,20 +126,38 @@ export function gridStyles(nonce: string): string {
       line-height: 1.4;
     }
     button { font-family: inherit; font-size: inherit; }
+    svg { display: block; }
+    .icon-btn, .export-btn, .engine-badge { display: inline-flex; align-items: center; }
+    .icon-btn, .export-btn { gap: 4px; }
+    .engine-badge {
+      gap: 5px; color: var(--vscode-descriptionForeground); font-size: 12px; white-space: nowrap;
+    }
+    .engine-badge .engine-mark {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 16px; height: 16px; border-radius: 3px; background: #fff;
+      box-shadow: 0 0 0 1px rgba(127,127,127,.3);
+    }
+    .engine-badge .engine-mark svg { width: 12px; height: 12px; }
+    .sort-mark svg, .col-btn svg, .chip button svg, .gutter .exp svg, .pager svg { width: 12px; height: 12px; }
+    .tab .dot svg { width: 11px; height: 11px; }
+    .popup .mi .glyph svg { width: 13px; height: 13px; }
     .sql-strip {
       position: relative;
-      padding: 8px 14px;
+      margin: 8px 14px;
+      padding: 8px 10px;
       font-family: var(--vscode-editor-font-family, monospace);
       font-size: var(--vscode-editor-font-size, 13px);
       color: var(--vscode-textPreformat-foreground, var(--vscode-foreground));
-      background: var(--vscode-editorWidget-background);
-      border-bottom: 1px solid var(--vscode-panel-border);
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
+      border-radius: 5px;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
-      max-height: 120px;
+      min-height: 46px;
+      max-height: 140px;
       overflow: auto;
     }
-    .sql-strip #reveal-btn { position: absolute; right: 8px; top: 6px; }
+    .sql-strip #reveal-btn { position: absolute; right: 10px; top: 8px; }
     .sql-strip .kw { color: var(--vscode-symbolKeywordForeground, #c586c0); }
     .sql-strip .num { color: var(--vscode-symbolConstantForeground, #b5cea8); }
     .sql-strip .str { color: var(--vscode-symbolStringForeground, #ce9178); }
@@ -136,12 +170,20 @@ export function gridStyles(nonce: string): string {
     }
     .tb { display: inline-flex; align-items: center; gap: 4px; }
     .icon-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 26px; height: 26px; padding: 0; border-radius: 50%;
       color: var(--vscode-icon-foreground, var(--vscode-foreground));
-      background: transparent; border: 0; border-radius: 4px;
-      padding: 3px 6px; cursor: pointer; line-height: 1;
+      background: var(--vscode-editorWidget-background);
+      border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
+      cursor: pointer; line-height: 1;
     }
-    .icon-btn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.2)); }
-    .icon-btn.active { color: var(--vscode-focusBorder); }
+    .icon-btn svg { width: 15px; height: 15px; }
+    .icon-btn:hover {
+      color: var(--vscode-focusBorder); border-color: var(--vscode-focusBorder);
+      background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.2));
+    }
+    .icon-btn:disabled { opacity: .4; cursor: default; }
+    .icon-btn.active { color: var(--vscode-focusBorder); border-color: var(--vscode-focusBorder); }
     .search-wrap { position: relative; display: inline-flex; align-items: center; }
     .search-wrap::before {
       content: ''; position: absolute; left: 8px; width: 9px; height: 9px; pointer-events: none;
@@ -154,16 +196,18 @@ export function gridStyles(nonce: string): string {
     #grid-search {
       color: var(--vscode-input-foreground); background: var(--vscode-input-background);
       border: 1px solid var(--vscode-input-border, transparent); border-radius: 4px;
-      padding: 4px 8px 4px 28px; min-width: 200px; width: 260px;
+      padding: 4px 8px 4px 28px; min-width: 160px; width: 200px; height: 26px;
     }
     #grid-search:focus { outline: 1px solid var(--vscode-focusBorder); }
     .export-btn {
       color: var(--vscode-button-foreground); background: var(--vscode-button-background);
-      border: 0; border-radius: 4px; padding: 4px 10px; cursor: pointer;
+      border: 0; border-radius: 4px; padding: 0 10px; height: 26px; cursor: pointer; font-size: 12px;
     }
     .export-btn:hover { background: var(--vscode-button-hoverBackground); }
+    .export-btn svg { width: 13px; height: 13px; }
     .cost, .total { color: var(--vscode-descriptionForeground); font-size: 12px; white-space: nowrap; }
     .pager { display: inline-flex; align-items: center; gap: 2px; color: var(--vscode-descriptionForeground); font-size: 12px; }
+    .pager #page-indicator { min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; }
     .chips { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 14px 0; }
     .chip {
       display: inline-flex; align-items: center; gap: 5px;
@@ -185,19 +229,27 @@ export function gridStyles(nonce: string): string {
     .tab[data-status="mutation"] .dot { color: var(--vscode-charts-blue, var(--vscode-focusBorder)); }
     .tab[data-status="skipped"] .dot { color: var(--vscode-descriptionForeground); }
     .tab.active { background: var(--vscode-editor-background); font-weight: 600; }
-    .grid-scroll { overflow: auto; max-height: calc(100vh - 130px); border-top: 1px solid var(--vscode-panel-border); }
+    .grid-scroll { overflow: auto; max-height: calc(100vh - 130px); }
     table.grid { border-collapse: separate; border-spacing: 0; min-width: 100%; }
     .grid th, .grid td {
-      border-bottom: 1px solid var(--vscode-panel-border); border-right: 1px solid var(--vscode-panel-border);
-      padding: 4px 9px; text-align: left; vertical-align: top; white-space: pre-wrap; overflow-wrap: anywhere;
+      border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
+      border-right: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
+      border-left: 1px solid transparent;
+      padding: 5px 9px; text-align: left; vertical-align: top; white-space: pre-wrap; overflow-wrap: anywhere;
       max-width: 480px;
     }
     .grid th {
       position: sticky; top: 0; z-index: 10;
       background: var(--vscode-editorWidget-background);
-      font-weight: 400;
+      font-weight: 500; vertical-align: middle;
     }
-    .grid thead tr { height: 40px; }
+    .grid thead tr { height: 42px; }
+    .grid tbody tr { height: 33px; }
+    .grid tbody tr.even td {
+      background: color-mix(in srgb, var(--vscode-foreground) 4%, var(--vscode-editor-background));
+    }
+    .grid tbody tr:not(.row-detail):hover td { background: var(--vscode-list-hoverBackground, rgba(128,128,128,.12)); }
+    .grid tbody tr.row-detail > td { background: var(--vscode-editorWidget-background); }
     .col-head { display: flex; align-items: flex-start; gap: 3px; }
     .col-text { display: flex; flex-direction: column; cursor: pointer; min-width: 40px; }
     .col-name { font-weight: 600; color: var(--vscode-symbolPropertyForeground, var(--vscode-foreground)); }
@@ -235,12 +287,18 @@ export function gridStyles(nonce: string): string {
       font-size: 12.5px;
     }
     .error-box {
-      margin: 8px 14px; padding: 8px 12px; border-radius: 4px;
-      border-left: 3px solid var(--vscode-errorForeground);
+      margin: 8px 14px; padding: 8px 12px; border-radius: 5px;
+      border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
+      color: var(--vscode-errorForeground);
       background: color-mix(in srgb, var(--vscode-errorForeground) 8%, var(--vscode-editorWidget-background));
       white-space: pre-wrap; overflow-wrap: anywhere;
     }
-    .result-summary { margin: 0; padding: 10px 14px; color: var(--vscode-testing-iconPassed, var(--vscode-charts-green)); font-weight: 600; }
+    .result-summary {
+      margin: 8px 14px; padding: 8px 12px; border-radius: 5px;
+      border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
+      color: var(--vscode-testing-iconPassed, var(--vscode-charts-green)); font-weight: 600;
+      background: color-mix(in srgb, var(--vscode-testing-iconPassed, var(--vscode-charts-green)) 8%, var(--vscode-editorWidget-background));
+    }
     .popup {
       position: fixed; z-index: 100; display: none;
       background: var(--vscode-editorWidget-background);
@@ -307,19 +365,17 @@ export function gridStyles(nonce: string): string {
       content: attr(data-col); color: var(--vscode-descriptionForeground);
       font-weight: 600; min-width: 110px; flex: none; padding-right: 10px;
     }
-    .filter-row {
-      background: color-mix(in srgb, var(--vscode-focusBorder) 8%, var(--vscode-editorWidget-background));
-    }
+    .filter-row { background: transparent; }
     .filter-input {
-      width: 100%;
+      width: 100%; height: 22px; box-sizing: border-box;
       color: var(--vscode-input-foreground);
-      background: var(--vscode-input-background);
-      border: 1px solid var(--vscode-input-border, transparent);
+      background: transparent;
+      border: 1px solid transparent;
       border-radius: 3px;
-      padding: 2px 6px;
+      padding: 0 6px;
       font-size: 12px;
-      box-sizing: border-box;
     }
+    .filter-input:hover { border-color: var(--vscode-input-border, var(--vscode-panel-border)); }
     .filter-input:focus { outline: 1px solid var(--vscode-focusBorder); }
   </style>`;
 }
@@ -332,7 +388,7 @@ function renderHeaders(grid: GridViewGrid, filters: readonly GridFilter[], sort:
   const cells = grid.columns
     .map((column) => {
       const active = sort?.column === column.name;
-      const mark = active ? `<span class="sort-mark">${sort?.direction === 'desc' ? '▼' : '▲'}</span>` : '';
+      const mark = active ? `<span class="sort-mark">${iconChevron(sort?.direction === 'desc' ? 'down' : 'up')}</span>` : '';
       const filtered = filters.some((filter) => filter.column === column.name);
       return `<th data-col="${escapeHtml(column.name)}">
         <div class="col-head">
@@ -340,7 +396,7 @@ function renderHeaders(grid: GridViewGrid, filters: readonly GridFilter[], sort:
             <span class="col-name">${escapeHtml(column.name)} ${mark}</span>
             ${column.type ? `<span class="col-type">${escapeHtml(column.type)}</span>` : ''}
           </span>
-          <button type="button" class="col-btn${filtered ? ' active' : ''}" data-filter-col="${escapeHtml(column.name)}" title="${escapeHtml(filterButtonTitle(filters, column.name))}">▽</button>
+          <button type="button" class="col-btn${filtered ? ' active' : ''}" data-filter-col="${escapeHtml(column.name)}" title="${escapeHtml(filterButtonTitle(filters, column.name))}">${iconFunnel()}</button>
         </div>
       </th>`;
     })
@@ -368,7 +424,7 @@ function renderRows(grid: GridViewGrid, isQueryMode: boolean = false): string {
         }
         return `<td${dataCol}>${escapeHtml(cell)}</td>`;
       });
-      return `<tr data-row="${rowIndex}"><td class="gutter"><span class="rownum">${rowIndex + 1}</span><button type="button" class="exp" data-expand="${rowIndex}" title="Show row details">›</button></td>${cells.join('')}</tr>`;
+      return `<tr data-row="${rowIndex}"${rowIndex % 2 === 1 ? ' class="even"' : ''}><td class="gutter"><span class="rownum">${rowIndex + 1}</span><button type="button" class="exp" data-expand="${rowIndex}" title="Show row details">${iconChevron('right')}</button></td>${cells.join('')}</tr>`;
     })
     .join('');
   if (grid.rows.length === 0) {
@@ -384,7 +440,7 @@ function chipRow(filters: readonly GridFilter[]): string {
   const chips = filters
     .map(
       (filter) =>
-        `<span class="chip" data-chip-col="${escapeHtml(filter.column)}">${escapeHtml(filter.column)} ${escapeHtml(filter.operator)}${filter.value !== undefined ? ` ${escapeHtml(filter.value)}` : ''}<button type="button" data-remove-chip="${escapeHtml(filter.column)}" title="Remove filter">✕</button></span>`,
+        `<span class="chip" data-chip-col="${escapeHtml(filter.column)}">${escapeHtml(filter.column)} ${escapeHtml(filter.operator)}${filter.value !== undefined ? ` ${escapeHtml(filter.value)}` : ''}<button type="button" data-remove-chip="${escapeHtml(filter.column)}" title="Remove filter">${iconClose()}</button></span>`,
     )
     .join('');
   return `<div class="chips" id="chips">${chips}</div>`;
@@ -400,7 +456,7 @@ function sqlStrip(grid: GridViewGrid): string {
     .replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="num">$1</span>')
     .replace(/(&#39;([^&]|&(?!#39;))*?&#39;)/g, '<span class="str">$1</span>');
   const revealBtn = grid.reveal
-    ? `<button type="button" class="icon-btn" id="reveal-btn" data-reveal-start="${grid.reveal.start}" data-reveal-end="${grid.reveal.end}" title="Open in SQL file">⇱</button>`
+    ? `<button type="button" class="icon-btn" id="reveal-btn" data-reveal-start="${grid.reveal.start}" data-reveal-end="${grid.reveal.end}" title="Open in SQL file">${iconReveal()}</button>`
     : '';
   return `<div class="sql-strip">${highlighted}${revealBtn}</div>`;
 }
@@ -410,17 +466,23 @@ function renderToolbar(options: DataGridViewOptions): string {
   const hasPager =
     options.mode === 'query' || (options.pageCount !== undefined && options.pageCount > 0);
   const pager = hasPager
-    ? `<span class="pager" id="grid-pager"><button type="button" class="icon-btn" id="page-prev" title="Previous page"${(options.pageIndex ?? 0) <= 0 ? ' disabled' : ''}>‹</button><span id="page-indicator">${(options.pageIndex ?? 0) + 1} / ${options.pageCount ?? 1}</span><button type="button" class="icon-btn" id="page-next" title="Next page"${options.pageCount !== undefined && (options.pageIndex ?? 0) + 1 >= options.pageCount ? ' disabled' : ''}>›</button></span>`
+    ? `<span class="pager" id="grid-pager"><button type="button" class="icon-btn" id="page-prev" title="Previous page"${(options.pageIndex ?? 0) <= 0 ? ' disabled' : ''}>${iconChevron('left')}</button><span id="page-indicator">${(options.pageIndex ?? 0) + 1} / ${options.pageCount ?? 1}</span><button type="button" class="icon-btn" id="page-next" title="Next page"${options.pageCount !== undefined && (options.pageIndex ?? 0) + 1 >= options.pageCount ? ' disabled' : ''}>${iconChevron('right')}</button></span>`
     : '';
-  const refresh = tableMode ? '<button type="button" class="icon-btn" id="refresh-btn" title="Refresh">⟳</button>' : '';
+  const refresh = tableMode
+    ? `<button type="button" class="icon-btn" id="refresh-btn" title="Refresh">${iconRefresh()}</button>`
+    : '';
   const showTotal = tableMode ? options.totalRows !== undefined : true;
+  const engineBadge = options.engine
+    ? `<span class="engine-badge" title="${escapeHtml(engineLabel(options.engine))}"><span class="engine-mark">${getEngineIcon(options.engine).svg}</span><span class="engine-badge-name">${escapeHtml(engineLabel(options.engine))}</span></span>`
+    : '';
   return `<div class="toolbar">
-    <span class="search-wrap"><input id="grid-search" type="search" placeholder="Search Results" value="${escapeHtml(options.search ?? '')}" /></span>
+    ${engineBadge}
+    <span class="search-wrap"><input id="grid-search" type="search" placeholder="Input To Search Data" value="${escapeHtml(options.search ?? '')}" /></span>
     <span class="tb">
-      <button type="button" class="icon-btn" id="clear-filters" title="Clear filters">⨯</button>
+      <button type="button" class="icon-btn" id="clear-filters" title="Clear filters">${iconClose()}</button>
       ${refresh}
-      <button type="button" class="icon-btn" id="transpose-btn" title="Reverse (transposed) view">⇅</button>
-      <button type="button" class="export-btn" id="export-open" title="Export">Export ▾</button>
+      <button type="button" class="icon-btn" id="transpose-btn" title="Reverse (transposed) view">${iconTranspose()}</button>
+      <button type="button" class="export-btn" id="export-open" title="Export">Export ${iconChevron('down')}</button>
     </span>
     ${options.cost ? `<span class="cost" id="cost">${escapeHtml(options.cost)}</span>` : ''}
     ${pager}
@@ -435,7 +497,7 @@ function renderTabs(options: DataGridViewOptions): string {
   const tabs = options.grids
     .map(
       (grid, index) =>
-        `<button type="button" class="tab${index === options.activeIndex ? ' active' : ''}" data-tab="${index}" data-status="${grid.status}" title="${escapeHtml(`${grid.label} · ${grid.status}${grid.durationMs !== undefined ? ` · ${(grid.durationMs / 1000).toFixed(2)}s` : ''}`)}"><span class="dot">●</span>${escapeHtml(grid.label)}</button>`,
+        `<button type="button" class="tab${index === options.activeIndex ? ' active' : ''}" data-tab="${index}" data-status="${grid.status}" title="${escapeHtml(`${grid.label} · ${grid.status}${grid.durationMs !== undefined ? ` · ${(grid.durationMs / 1000).toFixed(2)}s` : ''}`)}"><span class="dot">${iconDot()}</span>${escapeHtml(grid.label)}</button>`,
     )
     .join('');
   return `<div class="tabs" id="tabs">${tabs}</div>`;
@@ -468,13 +530,13 @@ function renderPopups(): string {
     .join('');
   const comparators = ['=', '>', '>=', '!=', '<=', '<', 'IS NULL', 'IS NOT NULL'];
   const comparatorItems = comparators
-    .map((operator) => `<button type="button" class="mi" data-cmp="${operator}"><span class="glyph">→</span>Filter by ${operator} <span class="cmp-val"></span></button>`)
+    .map((operator) => `<button type="button" class="mi" data-cmp="${operator}"><span class="glyph">${iconArrowRight()}</span>Filter by ${operator} <span class="cmp-val"></span></button>`)
     .join('');
   return `<div class="popup" id="ctx-menu">
-    <button type="button" class="mi" data-action="copy-cell"><span class="glyph">⧉</span>Copy</button>
-    <button type="button" class="mi" data-action="copy-row"><span class="glyph">⧉</span>Copy Row (INSERT)</button>
+    <button type="button" class="mi" data-action="copy-cell"><span class="glyph">${iconCopy()}</span>Copy</button>
+    <button type="button" class="mi" data-action="copy-row"><span class="glyph">${iconCopy()}</span>Copy Row (INSERT)</button>
     <div class="sep"></div>
-    <button type="button" class="mi sub" data-action="filter-open"><span class="glyph">▽</span>Filter by …</button>
+    <button type="button" class="mi sub" data-action="filter-open"><span class="glyph">${iconFunnel()}</span>Filter by …</button>
     ${comparatorItems}
   </div>
   <div class="popup filter-pop" id="filter-pop">
@@ -501,6 +563,12 @@ function clientScript(nonce: string, options: DataGridViewOptions): string {
     filters: options.filters ?? [],
     sort: options.sort,
     pageIndex: options.pageIndex ?? 0,
+    icons: {
+      expand: iconChevron('right'),
+      sortAsc: iconChevron('up'),
+      sortDesc: iconChevron('down'),
+      close: iconClose(),
+    },
   };
   return `<script nonce="${nonce}">
   (function () {
@@ -620,6 +688,7 @@ function clientScript(nonce: string, options: DataGridViewOptions): string {
           var originalIndex = grid.rows.indexOf(row);
           var tr = document.createElement('tr');
           tr.setAttribute('data-row', String(originalIndex < 0 ? displayIndex : originalIndex));
+          if (displayIndex % 2 === 1) { tr.className = 'even'; }
           var gutter = document.createElement('td');
           gutter.className = 'gutter';
           var num = document.createElement('span');
@@ -629,7 +698,7 @@ function clientScript(nonce: string, options: DataGridViewOptions): string {
           exp.type = 'button';
           exp.className = 'exp';
           exp.setAttribute('data-expand', String(originalIndex < 0 ? displayIndex : originalIndex));
-          exp.textContent = '›';
+          exp.innerHTML = DATA.icons.expand;
           exp.title = 'Show row details';
           gutter.appendChild(num); gutter.appendChild(exp);
           tr.appendChild(gutter);
@@ -683,7 +752,7 @@ function clientScript(nonce: string, options: DataGridViewOptions): string {
         if (state.sort && state.sort.column === name) {
           var span = document.createElement('span');
           span.className = 'sort-mark';
-          span.textContent = state.sort.direction === 'desc' ? '▼' : '▲';
+          span.innerHTML = state.sort.direction === 'desc' ? DATA.icons.sortDesc : DATA.icons.sortAsc;
           el.querySelector('.col-name').appendChild(span);
         }
       });
@@ -701,7 +770,7 @@ function clientScript(nonce: string, options: DataGridViewOptions): string {
         var remove = document.createElement('button');
         remove.type = 'button';
         remove.setAttribute('data-remove-chip', filter.column);
-        remove.textContent = '✕';
+        remove.innerHTML = DATA.icons.close;
         remove.title = 'Remove filter';
         chip.appendChild(remove);
         wrap.appendChild(chip);

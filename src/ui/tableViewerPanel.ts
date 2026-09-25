@@ -17,6 +17,7 @@ import * as vscode from 'vscode';
 import type { ConnectionManager } from '../connections/connectionManager';
 import { DbError } from '../db/errors';
 import type {
+  EngineId,
   Logger,
   TableDataPage,
   TableDataRequest,
@@ -33,6 +34,7 @@ interface TableViewerOptions {
   readonly manager: ConnectionManager;
   readonly logger: Logger;
   readonly ref: TableRef;
+  readonly engine?: EngineId;
   readonly title: string;
 }
 
@@ -249,6 +251,7 @@ export class TableViewerPanel {
       mode: 'table' as const,
       grids: [this.grid()],
       activeIndex: 0,
+      engine: this.options.engine,
       filters: toGridFilters(this.request.filters ?? []),
       sort: this.request.sort?.[0],
       search: this.request.search,

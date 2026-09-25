@@ -10,11 +10,13 @@
  * cache entry expires or is invalidated.
  */
 
+import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { getEngineIcon } from '../ui/icons';
 import type { ConnectionManager, SessionStatus } from '../connections/connectionManager';
 import type { ConnectionStore } from '../connections/connectionStore';
 import type { DriverRegistry } from '../db/driverRegistry';
-import type { DatabaseDriver, ConnectionProfile, ColumnInfo, RoutineInfo, SchemaRef, TableRef } from '../db/types';
+import type { DatabaseDriver, ConnectionProfile, ColumnInfo, EngineId, RoutineInfo, SchemaRef, TableRef } from '../db/types';
 import type { MetadataCache } from '../metadata/metadataCache';
 
 export type ExplorerNodeKind =
@@ -50,17 +52,12 @@ export function cacheKey(connectionId: string, ...parts: Array<string | number |
 
 const SPIN = 'loading~spin';
 
-export function engineIconForState(state: SessionStatus['state']): vscode.ThemeIcon {
-  switch (state) {
-    case 'connected':
-      return new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.green'));
-    case 'connecting':
-      return new vscode.ThemeIcon(SPIN);
-    case 'error':
-      return new vscode.ThemeIcon('error', new vscode.ThemeColor('errorForeground'));
-    default:
-      return new vscode.ThemeIcon('circle-outline');
-  }
+/** Shipped engine marks live next to `dist/` in the installed extension. */
+const ICON_DIR = path.join(__dirname, '..', 'resources', 'icon');
+
+/** Resolves the shipped engine mark file for a profile. */
+function engineIconPath(engine: EngineId): vscode.Uri {
+  return vscode.Uri.file(path.join(ICON_DIR, getEngineIcon(engine).file));
 }
 
 export abstract class ExplorerNode extends vscode.TreeItem {
@@ -174,7 +171,7 @@ export class ConnectionNode extends ExplorerNode {
   /** Refreshes every visual aspect without rebuilding the node. */
   applyStatus(status: SessionStatus): void {
     this.status = status;
-    this.iconPath = engineIconForState(status.state);
+    this.iconPath = engineIconPath(this.profile.engine);
     this.description = ConnectionNode.describe(this.profile, status);
     this.tooltip = ConnectionNode.tooltipFor(this.profile, status);
     this.collapsibleState =

@@ -13,8 +13,8 @@
  *    resources.
  *  - **No secrets leave the webview** except what the user just typed, and the
  *    host never sends a stored secret back.
- *  - **No emoji and no em dash**: status markers use text glyphs only
- *    (● ✕ ⟳), never colour alone.
+ *  - **No emoji and no em dash**: status markers are inline SVG panes with a
+ *    separate textContent span, never colour alone.
  *
  * The webview script is written without template literals on purpose: it is
  * embedded in a template literal here, so `${` inside it would have to be
@@ -24,6 +24,12 @@
 import { randomBytes } from 'node:crypto';
 import type * as vscode from 'vscode';
 import type { FormDraft, SecretPresence } from './connectionDraft';
+import { iconStatusBusy, iconStatusError, iconStatusOk } from './icons';
+
+/** Inline SVG status marks, JSON-escaped so they slide into the client script. */
+const STATUS_ICON_OK = JSON.stringify(iconStatusOk());
+const STATUS_ICON_ERROR = JSON.stringify(iconStatusError());
+const STATUS_ICON_BUSY = JSON.stringify(iconStatusBusy());
 
 const BASE_STYLES = `
   * { box-sizing: border-box; }
@@ -63,6 +69,9 @@ const BASE_STYLES = `
   .segmented { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
 
   .tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
     font-family: var(--vscode-font-family);
     font-size: var(--vscode-font-size);
     color: var(--vscode-foreground);
@@ -71,6 +80,7 @@ const BASE_STYLES = `
     border-radius: 4px;
     padding: 5px 14px;
     cursor: pointer;
+    user-select: none;
   }
   .tab:hover:not(.active) { background-color: var(--vscode-list-hoverBackground, transparent); }
   .tab.active {
@@ -78,6 +88,13 @@ const BASE_STYLES = `
     background-color: var(--vscode-button-background);
     border-color: var(--vscode-button-background);
   }
+  .engine-logo {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; flex: 0 0 16px;
+    background: #fff; border-radius: 3px;
+    box-shadow: 0 0 0 1px rgba(127, 127, 127, 0.35);
+  }
+  .engine-logo svg { width: 12px; height: 12px; display: block; }
 
   .row { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 12px; }
   .row:last-child { margin-bottom: 0; }
@@ -190,6 +207,10 @@ const BASE_STYLES = `
     border-color: var(--vscode-panel-border, var(--vscode-widget-border));
     background-color: var(--vscode-inputValidation-warningBackground, transparent);
   }
+
+  .status-glyph { display: inline-flex; width: 14px; height: 14px; flex: 0 0 14px; }
+  .status-glyph svg { width: 14px; height: 14px; display: block; }
+  .status-text { min-width: 0; }
 
   .hidden { display: none !important; }
 `;
@@ -487,7 +508,14 @@ const SCRIPT_PART_ONE = `
       tab.className = 'tab';
       tab.setAttribute('data-engine', engines[i].id);
       tab.setAttribute('aria-pressed', 'false');
-      tab.textContent = label;
+      var logo = document.createElement('span');
+      logo.className = 'engine-logo';
+      logo.innerHTML = engines[i].logo || '';
+      var name = document.createElement('span');
+      name.className = 'engine-name';
+      name.textContent = label;
+      tab.appendChild(logo);
+      tab.appendChild(name);
       tabsHost.appendChild(tab);
     }
     syncTabs();
@@ -529,19 +557,30 @@ const SCRIPT_PART_TWO = `
     }
   }
 
-  // Text-only status markers: ● ok, ✕ error, ⟳ busy (never colour alone).
+  // Status markers are inline SVG panes built from trusted host markup; the
+  // text travels in a separate textContent span so server messages stay inert.
   function statusGlyph(kind) {
-    if (kind === 'ok') { return '●'; }
-    if (kind === 'error') { return '✕'; }
-    if (kind === 'busy') { return '⟳'; }
+    if (kind === 'ok') { return ${STATUS_ICON_OK}; }
+    if (kind === 'error') { return ${STATUS_ICON_ERROR}; }
+    if (kind === 'busy') { return ${STATUS_ICON_BUSY}; }
     return '';
   }
 
   function setStatus(kind, text) {
-    if (!text) { statusEl.className = 'status'; statusEl.textContent = ''; return; }
+    statusEl.innerHTML = '';
+    if (!text) { statusEl.className = 'status'; return; }
     statusEl.className = 'status visible ' + kind;
     var glyph = statusGlyph(kind);
-    statusEl.textContent = glyph ? glyph + ' ' + text : text;
+    if (glyph) {
+      var icon = document.createElement('span');
+      icon.className = 'status-glyph';
+      icon.innerHTML = glyph;
+      statusEl.appendChild(icon);
+    }
+    var label = document.createElement('span');
+    label.className = 'status-text';
+    label.textContent = text;
+    statusEl.appendChild(label);
   }
 
   function setBusy(busy, label) {
@@ -581,9 +620,9 @@ const SCRIPT_PART_THREE = `
     if (action === 'save') { api.postMessage({ type: 'save', draft: readDraft() }); return; }
     if (action === 'test') { api.postMessage({ type: 'test', draft: readDraft() }); return; }
     if (action === 'cancel') { api.postMessage({ type: 'cancel' }); return; }
-    var engineId = target.getAttribute('data-engine');
-    if (engineId) {
-      field('engine').value = engineId;
+    var engineBtn = target.closest('[data-engine]');
+    if (engineBtn) {
+      field('engine').value = engineBtn.getAttribute('data-engine');
       syncTabs();
       applyEngine();
     }
@@ -635,6 +674,8 @@ const SCRIPT_PART_THREE = `
 export interface EngineChoice {
   id: string;
   label: string;
+  /** Inline SVG brand mark shown in the engine tab. */
+  logo: string;
   status: string;
   defaultPort?: number;
   fileBased?: boolean;

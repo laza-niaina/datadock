@@ -11,7 +11,7 @@
 
 import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
-import type { QueryResultSet } from '../db/types';
+import type { EngineId, QueryResultSet } from '../db/types';
 import type { GridCell, GridColumn, GridExportFormat } from './dataGrid/dataGridModel';
 import { renderGridExport, exportFileName, serializeGridValue } from './dataGrid/dataGridModel';
 import {
@@ -50,6 +50,8 @@ export interface QueryDisplayOptions {
   readonly connectionName: string;
   readonly database?: string;
   readonly durationMs: number;
+  /** Engine whose brand mark is shown in the result toolbar. */
+  readonly engine?: EngineId;
   /** Non-fatal server notices shown above the grid. */
   readonly notices: readonly string[];
   readonly statements: readonly QueryStatementDisplay[];
@@ -146,7 +148,8 @@ function renderQueryResultPage(options: QueryDisplayOptions): string {
     mode: 'query',
     grids,
     activeIndex: firstActive,
-    cost: `Cost: ${(options.durationMs / 1000).toFixed(2)}s`,
+    engine: options.engine,
+    cost: `Cost: ${Math.round(options.durationMs)}ms`,
   };
   const summaryParts = [
     `<strong>${options.statements.length}</strong> statement(s)`,
@@ -164,14 +167,20 @@ function renderQueryResultPage(options: QueryDisplayOptions): string {
     .page-head { padding: 10px 14px 0; color: var(--vscode-descriptionForeground); font-size: 12px; }
     .page-head strong { color: var(--vscode-foreground); }
     .summary-error {
-      margin: 8px 14px 0; padding: 8px 12px; border-left: 3px solid var(--vscode-errorForeground); border-radius: 4px;
-      background: color-mix(in srgb, var(--vscode-errorForeground) 10%, var(--vscode-editorWidget-background));
+      margin: 8px 14px 0; padding: 8px 12px; border-radius: 5px;
+      border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
+      color: var(--vscode-errorForeground);
+      background: var(--vscode-editorWidget-background);
       font-weight: 600;
     }
-    .notices { margin: 8px 14px 0; padding: 8px 12px 8px 30px; border-left: 3px solid var(--vscode-editorWarning-foreground); background: var(--vscode-editorWidget-background); }
+    .notices {
+      margin: 8px 14px 0; padding: 8px 12px; border-radius: 5px;
+      border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
+      background: var(--vscode-editorWidget-background);
+    }
     .notices li { margin: 2px 0; }
     .sql-strip { position: relative; }
-    #reveal-btn { position: absolute; right: 8px; top: 6px; }
+    #reveal-btn { position: absolute; right: 10px; top: 8px; }
     .dialog-backdrop { z-index: 200; }
   </style>`;
   const body = `<div class="page-head">DataDock · ${escapeHtml(options.connectionName)}${options.database ? ` · ${escapeHtml(options.database)}` : ''} · ${summaryParts}</div>
