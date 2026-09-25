@@ -25,6 +25,7 @@ import { initSqlFileAssociations } from './sql/sqlFileState';
 import { SqlBlockCodeLensProvider } from './sql/sqlCodeLens';
 import { combinedSqlStatusText, sqlStatusLabels } from './util/engineDisplay';
 import { globalRedactor } from './util/redaction';
+import { configureResultViewRoot } from './ui/resultView/resultHost';
 
 /** Kept for `deactivate`, which must close every socket before VS Code exits. */
 let activeManager: ConnectionManager | undefined;
@@ -33,6 +34,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const logger = new OutputLogger(globalRedactor);
   const configuration = vscode.workspace.getConfiguration('dbclient');
   logger.setLevel(toLogLevel(configuration.get<string>('log.level')));
+
+  // Points the result webview bundle (dist/webview) and its panel icon at the
+  // running extension; the panels resolve assets lazily from here.
+  configureResultViewRoot(context.extensionUri);
 
   // Registers MySQL, MariaDB and SQLite. Must run before any registry read:
   // the wizard, the explorer and the connection manager all derive their

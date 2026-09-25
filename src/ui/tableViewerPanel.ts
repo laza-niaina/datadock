@@ -1,8 +1,9 @@
 /**
- * Paginated table viewer built on the shared DataDock data grid (the
- * "Result View" design): toolbar with search, clear-filters, transpose and the
- * Export dialog; typed sortable headers; per-column filters; row-number gutter
- * with expandable row details.
+ * Paginated table viewer built on the shared DataDock result webview (the
+ * reference "Result View" chain): toolbar with search, export, refresh, cost
+ * and pager, typed sortable headers, per-column filters, green index column.
+ * The webview is a Vue 2 + umy-table bundle shipped from dist/webview (see
+ * resultHost.ts / renderDataGridPage).
  *
  * Unlike the query result grid (client-side filtering of one fetched batch),
  * the table viewer pushes filters, sort, search and paging down to the driver
@@ -29,6 +30,7 @@ import { globalRedactor } from '../util/redaction';
 import type { GridCell, GridColumn, GridExportFormat, GridFilter } from './dataGrid/dataGridModel';
 import { GRID_PAGE_SIZE, exportFileName, renderGridExport, serializeGridValue } from './dataGrid/dataGridModel';
 import { renderDataGridPage, escapeHtml, type GridViewGrid } from './dataGrid/dataGridView';
+import { panelIconUri, resultViewAssets, resultViewWebviewOptions } from './resultView/resultHost';
 
 interface TableViewerOptions {
   readonly manager: ConnectionManager;
@@ -141,8 +143,9 @@ export class TableViewerPanel {
       'dbclient.tableViewer',
       `DataDock - ${options.title}`,
       vscode.ViewColumn.Active,
-      { enableScripts: true, retainContextWhenHidden: false, localResourceRoots: [] },
+      resultViewWebviewOptions(),
     );
+    panel.iconPath = panelIconUri();
     const instance = new TableViewerPanel(panel, options, key);
     TableViewerPanel.open.set(key, instance);
     void instance.load();
@@ -256,11 +259,12 @@ export class TableViewerPanel {
       sort: this.request.sort?.[0],
       search: this.request.search,
       pageIndex: Math.floor(this.request.offset / Math.max(1, this.request.limit)),
+      pageSize: this.request.limit,
       pageCount: this.pageCount(),
       totalRows: this.page?.totalRows,
       cost: `Page size ${this.request.limit}`,
     };
-    return renderDataGridPage(view, this.options.title);
+    return renderDataGridPage(resultViewAssets(this.panel.webview), view, this.options.title);
   }
 
   /** Exports the currently fetched page (host-side rendering). */
@@ -270,7 +274,7 @@ export class TableViewerPanel {
       void vscode.window.showInformationMessage('Nothing to export: the current page has no rows.');
       return;
     }
-    const content = renderGridExport(format, this.options.ref.table, grid.columns, grid.rows);
+    const content = renderGridExport(format, this.options.ref.table, grid.columns, grid.rows.map((row) => [...row]));
     if (content.trim() === '') {
       void vscode.window.showInformationMessage('Nothing to export.');
       return;

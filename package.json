@@ -428,9 +428,12 @@
     }
   },
   "dependencies": {
+    "babel-helper-vue-jsx-merge-props": "2.0.3",
     "mssql": "^12.7.2",
     "mysql2": "^3.24.4",
     "pg": "^8.23.0",
-    "sql.js": "^1.14.2"
+    "sql.js": "^1.14.2",
+    "umy-table": "1.0.8",
+    "vue": "2.6.14"
   }
 }

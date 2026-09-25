@@ -68,23 +68,50 @@ const options = {
   ],
 };
 
+/**
+ * Webview bundle for the result view (query results + table viewer) compiled
+ * by the second esbuild entry into `dist/webview/resultApp.js`. Built as a
+ * standalone IIFE over the shared page shell (renderDataGridPage): Vue 2
+ * runtime + umy-table, no template compiler, so the strict CSP never needs
+ * unsafe-eval. The loader keeps stray webfont assets (vendored element-icons)
+ * as real files; `font-src 'none'` in the page CSP keeps them inert.
+ */
+/** @type {import('esbuild').BuildOptions} */
+const webviewOptions = {
+  entryPoints: ['src/ui/resultView/resultApp.ts'],
+  outfile: 'dist/webview/resultApp.js',
+  bundle: true,
+  format: 'iife',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: production ? false : 'inline',
+  minify: production,
+  keepNames: true,
+  logLevel: 'info',
+  metafile: production,
+  loader: { '.woff': 'file', '.woff2': 'file', '.ttf': 'file' },
+};
+
 async function main() {
   if (watch) {
-    const ctx = await esbuild.context(options);
-    await ctx.watch();
+    const ctxs = await Promise.all([esbuild.context(options), esbuild.context(webviewOptions)]);
+    await Promise.all(ctxs.map((ctx) => ctx.watch()));
     copyRuntimeAssets();
     console.log('[esbuild] watching for changes...');
     return;
   }
 
   await esbuild.build(options);
+  await esbuild.build(webviewOptions);
   copyRuntimeAssets();
 
   if (production && options.metafile) {
-    const meta = await esbuild.build({ ...options, metafile: true, write: false });
     const size = fs.statSync(options.outfile).size;
     console.log(`[esbuild] dist/extension.js = ${(size / 1024).toFixed(0)} kB`);
-    void meta;
+  }
+  if (production && webviewOptions.metafile) {
+    const size = fs.statSync(webviewOptions.outfile).size;
+    console.log(`[esbuild] dist/webview/resultApp.js = ${(size / 1024).toFixed(0)} kB`);
   }
 }
 

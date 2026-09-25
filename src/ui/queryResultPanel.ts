@@ -1,7 +1,9 @@
 /**
- * Query result panel for the SQL runner, built on the shared DataDock data
- * grid (the "Result View" design): one tab per statement, toolbar with search,
- * transpose and Export dialog, cell context menu with filter/copy actions.
+ * Query result panel for the SQL runner, built on the shared DataDock result
+ * webview (the reference "Result View" chain): compact tabs per statement,
+ * toolbar with engine mark, search, columns, export and total cost, banner per
+ * grid, batch summary in the head. The webview is a Vue 2 + umy-table bundle
+ * shipped from dist/webview (see resultHost.ts / renderDataGridPage).
  *
  * The panel is scriptable (navigation/export intents only): each statement
  * carries an "open in SQL file" action resolved by the host, and exports are
@@ -9,19 +11,17 @@
  * reach the webview and no credential ever crosses the webview boundary.
  */
 
-import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import type { EngineId, QueryResultSet } from '../db/types';
 import type { GridCell, GridColumn, GridExportFormat } from './dataGrid/dataGridModel';
 import { renderGridExport, exportFileName, serializeGridValue } from './dataGrid/dataGridModel';
 import {
-  renderDataGridBody,
-  gridStyles,
-  escapeHtml,
+  renderDataGridPage,
   tableFromStatement,
-  type GridViewGrid,
   type DataGridViewOptions,
+  type GridViewGrid,
 } from './dataGrid/dataGridView';
+import { panelIconUri, resultViewAssets, resultViewWebviewOptions } from './resultView/resultHost';
 
 export interface QueryStatementDisplay {
   /** 1-based position inside the submitted batch. */
@@ -115,33 +115,7 @@ function gridsForStatements(statements: readonly QueryStatementDisplay[]): GridV
   return grids;
 }
 
-function pageShell(nonce: string, title: string, head: string, body: string, script: string): string {
-  const csp = [
-    "default-src 'none'",
-    `style-src 'nonce-${nonce}'`,
-    `script-src 'nonce-${nonce}'`,
-    "font-src 'none'",
-    "base-uri 'none'",
-    "form-action 'none'",
-  ].join('; ');
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="${csp}" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${escapeHtml(title)}</title>
-  ${head}
-</head>
-<body>
-${body}
-<script nonce="${nonce}">${script}</script>
-</body>
-</html>`;
-}
-
-function renderQueryResultPage(options: QueryDisplayOptions): string {
-  const nonce = randomBytes(16).toString('base64');
+function renderQueryResultPage(panel: vscode.WebviewPanel, options: QueryDisplayOptions): string {
   const grids = gridsForStatements(options.statements);
   const firstActive = Math.max(0, grids.findIndex((grid) => grid.status === 'error'));
   const viewOptions: DataGridViewOptions = {
@@ -150,44 +124,17 @@ function renderQueryResultPage(options: QueryDisplayOptions): string {
     activeIndex: firstActive,
     engine: options.engine,
     cost: `Cost: ${Math.round(options.durationMs)}ms`,
+    query: {
+      connectionName: options.connectionName,
+      database: options.database,
+      statementCount: options.statements.length,
+      executedCount: options.statements.filter((statement) => !statement.skipped).length,
+      durationMs: options.durationMs,
+      hasError: options.hasError,
+      notices: options.notices,
+    },
   };
-  const summaryParts = [
-    `<strong>${options.statements.length}</strong> statement(s)`,
-    `<strong>${options.statements.filter((statement) => !statement.skipped).length}</strong> executed`,
-    `<strong>${(options.durationMs / 1000).toFixed(2)} s</strong> total`,
-  ].join(' · ');
-  const notices =
-    options.notices.length > 0
-      ? `<ul class="notices">${options.notices.map((notice) => `<li>${escapeHtml(notice)}</li>`).join('')}</ul>`
-      : '';
-  const errorBanner = options.hasError
-    ? '<p class="summary-error">One or more statements failed. The failing statement is marked in its tab.</p>'
-    : '';
-  const head = `${gridStyles(nonce)}<style nonce="${nonce}">
-    .page-head { padding: 10px 14px 0; color: var(--vscode-descriptionForeground); font-size: 12px; }
-    .page-head strong { color: var(--vscode-foreground); }
-    .summary-error {
-      margin: 8px 14px 0; padding: 8px 12px; border-radius: 5px;
-      border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
-      color: var(--vscode-errorForeground);
-      background: var(--vscode-editorWidget-background);
-      font-weight: 600;
-    }
-    .notices {
-      margin: 8px 14px 0; padding: 8px 12px; border-radius: 5px;
-      border: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
-      background: var(--vscode-editorWidget-background);
-    }
-    .notices li { margin: 2px 0; }
-    .sql-strip { position: relative; }
-    #reveal-btn { position: absolute; right: 10px; top: 8px; }
-    .dialog-backdrop { z-index: 200; }
-  </style>`;
-  const body = `<div class="page-head">DataDock · ${escapeHtml(options.connectionName)}${options.database ? ` · ${escapeHtml(options.database)}` : ''} · ${summaryParts}</div>
-  ${errorBanner}
-  ${notices}
-  ${renderDataGridBody(viewOptions, nonce)}`;
-  return pageShell(nonce, 'DataDock Query Result', head, body, '');
+  return renderDataGridPage(resultViewAssets(panel.webview), viewOptions, 'DataDock Query Result');
 }
 
 export class QueryResultPanel {
@@ -211,7 +158,7 @@ export class QueryResultPanel {
     if (existing) {
       existing.reveal = onReveal;
       existing.statements = options.statements;
-      existing.panel.webview.html = renderQueryResultPage(options);
+      existing.panel.webview.html = renderQueryResultPage(existing.panel, options);
       existing.panel.reveal(vscode.ViewColumn.Active);
       return;
     }
@@ -219,12 +166,13 @@ export class QueryResultPanel {
       'dbclient.queryResult',
       options.panelTitle,
       vscode.ViewColumn.Active,
-      { enableScripts: true, retainContextWhenHidden: false, localResourceRoots: [] },
+      resultViewWebviewOptions(),
     );
+    panel.iconPath = panelIconUri();
     const instance = new QueryResultPanel(panel, options.key, options.statements);
     instance.reveal = onReveal;
     QueryResultPanel.open.set(options.key, instance);
-    panel.webview.html = renderQueryResultPage(options);
+    panel.webview.html = renderQueryResultPage(panel, options);
   }
 
   private onMessage(message: unknown): void {
