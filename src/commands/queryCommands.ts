@@ -20,6 +20,20 @@ import * as vscode from 'vscode';
 import { DbError } from '../db/errors';
 import type { ConnectionProfile, DatabaseDriver, QueryExecutionResult } from '../db/types';
 import { RelationNode } from '../explorer/nodes';
+import {
+  clearHistoryEntries,
+  historyEntryLabel,
+  historyEntryWhen,
+  readHistoryState,
+  recordHistoryEntries,
+  removeHistoryEntry,
+  setHistoryEnabled,
+  writeHistoryState,
+  type QueryHistoryEntry,
+  type QueryHistoryInput,
+  type QueryHistoryState,
+  type QueryHistoryStorage,
+} from '../sql/queryHistory';
 import { sqlFileAssociations, type SqlFileAssociation } from '../sql/sqlFileState';
 import { splitSqlStatements, statementAtOffset, type SqlStatement } from '../sql/sqlStatements';
 import { QueryResultPanel, type QueryStatementDisplay } from '../ui/queryResultPanel';
@@ -44,6 +58,14 @@ interface RunnableStatement {
   readonly text: string;
   readonly start: number;
   readonly end: number;
+}
+
+/** Bound during activation (`initQueryHistory`) so every run records here. */
+let historyStorage: QueryHistoryStorage | undefined;
+
+/** Binds the workspace Memento used by the query history (called once). */
+export function initQueryHistory(state: QueryHistoryStorage): void {
+  historyStorage = state;
 }
 
 async function ensureDriver(services: CommandServices, profile: ConnectionProfile): Promise<QueryTarget> {
@@ -407,6 +429,7 @@ async function runStatements(
 
       const durationMs = Date.now() - started;
       const hasError = displays.some((display) => display.error !== undefined);
+      recordBatchHistory(services, target, effectiveDatabase, displays);
       QueryResultPanel.show(
         {
           key: `sql:${uri.toString()}`,
@@ -435,7 +458,208 @@ async function runStatements(
   );
 }
 
+/** Persists every executed statement of the batch in the query history. */
+function recordBatchHistory(
+  services: CommandServices,
+  target: QueryTarget,
+  database: string | undefined,
+  displays: readonly QueryStatementDisplay[],
+): void {
+  const storage = historyStorage;
+  if (!storage) {
+    return;
+  }
+  const state = readHistoryState(storage);
+  if (!state.enabled) {
+    return;
+  }
+  const databaseName = database && database.length > 0 ? database : undefined;
+  const inputs: QueryHistoryInput[] = displays
+    .filter((display) => !display.skipped)
+    .map((display) => ({
+      sql: display.text,
+      connectionId: target.profile.id,
+      connectionName: target.profile.name,
+      database: databaseName,
+      timestamp: Date.now(),
+      durationMs: display.durationMs,
+      status: display.error !== undefined ? ('error' as const) : ('ok' as const),
+      error: display.error,
+    }));
+  if (inputs.length === 0) {
+    return;
+  }
+  void writeHistoryState(storage, recordHistoryEntries(state, inputs)).catch((error: unknown) => {
+    services.logger.error('Failed to persist query history.', { error: String(error) });
+  });
+}
+
+/** Inserts the recorded statement at the cursor (DBCode "Load"). */
+async function loadHistoryIntoEditor(sql: string): Promise<void> {
+  try {
+    const editor = vscode.window.activeTextEditor;
+    if (editor) {
+      const position = editor.selection.active;
+      const applied = await editor.edit((builder) => builder.insert(position, sql));
+      if (applied) {
+        return;
+      }
+    }
+    const document = await vscode.workspace.openTextDocument({ language: 'sql', content: sql });
+    await vscode.window.showTextDocument(document, { preview: false });
+  } catch {
+    void vscode.window.showErrorMessage('DataDock: could not load the query into the editor.');
+  }
+}
+
+/** One QuickPick row: a recorded statement or the clear action. */
+interface HistoryPick extends vscode.QuickPickItem {
+  readonly action: 'entry' | 'clear';
+  readonly entry?: QueryHistoryEntry;
+}
+
+/** Clear action first, then every entry newest first (DBCode history list). */
+function historyItems(state: QueryHistoryState): HistoryPick[] {
+  const clear: HistoryPick = {
+    label: '$(clear-all) Clear History',
+    description: `${state.entries.length} recorded`,
+    action: 'clear',
+  };
+  const entries: HistoryPick[] = state.entries.map((entry) => ({
+    label: `${entry.status === 'error' ? '$(error)' : '$(database)'} ${historyEntryLabel(entry)}`,
+    description: `${entry.connectionName}${entry.database ? ` : ${entry.database}` : ''}`,
+    detail: `${historyEntryWhen(entry.timestamp)} · ${Math.round(entry.durationMs)}ms${
+      entry.status === 'error' && entry.error ? ` · ${entry.error}` : ''
+    }`,
+    action: 'entry',
+    entry,
+    buttons: [
+      { iconPath: new vscode.ThemeIcon('file-code'), tooltip: 'Load into editor' },
+      { iconPath: new vscode.ThemeIcon('copy'), tooltip: 'Copy query' },
+      { iconPath: new vscode.ThemeIcon('trash'), tooltip: 'Delete from history' },
+    ],
+  }));
+  return [clear, ...entries];
+}
+
+/**
+ * History panel (DBCode's query history): Enter loads the statement into the
+ * editor, the item buttons load / copy / delete inline, and the pinned Clear
+ * History action empties the list after a confirmation.
+ */
+async function showHistoryPicker(
+  services: CommandServices,
+  storage: QueryHistoryStorage,
+  initial: QueryHistoryState,
+): Promise<void> {
+  let state = initial;
+  const picker = vscode.window.createQuickPick<HistoryPick>();
+  picker.placeholder = 'Query history, newest first. Select an entry to load it into the editor.';
+  picker.matchOnDescription = true;
+  picker.matchOnDetail = true;
+  picker.items = historyItems(state);
+
+  const refresh = (): void => {
+    picker.items = historyItems(state);
+  };
+  const persist = async (): Promise<void> => {
+    try {
+      await writeHistoryState(storage, state);
+    } catch {
+      services.logger.error('Failed to persist query history.');
+    }
+  };
+
+  picker.onDidTriggerItemButton(async (event) => {
+    const item = event.item;
+    if (item.action !== 'entry' || !item.entry) {
+      return;
+    }
+    if (event.button.tooltip === 'Load into editor') {
+      picker.hide();
+      await loadHistoryIntoEditor(item.entry.sql);
+      return;
+    }
+    if (event.button.tooltip === 'Copy query') {
+      await vscode.env.clipboard.writeText(item.entry.sql);
+      return;
+    }
+    if (event.button.tooltip === 'Delete from history') {
+      state = removeHistoryEntry(state, item.entry.id);
+      await persist();
+      refresh();
+    }
+  });
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      picker.dispose();
+      resolve();
+    };
+    picker.onDidAccept(async () => {
+      const selected = picker.selectedItems[0];
+      if (!selected) {
+        picker.hide();
+        return;
+      }
+      if (selected.action === 'clear') {
+        const confirm = await vscode.window.showWarningMessage('Clear the whole query history?', { modal: true }, 'Clear');
+        if (confirm === 'Clear') {
+          state = clearHistoryEntries(state);
+          await persist();
+          refresh();
+        }
+        return;
+      }
+      if (selected.entry) {
+        picker.hide();
+        await loadHistoryIntoEditor(selected.entry.sql);
+      }
+    });
+    picker.onDidHide(() => finish());
+    picker.show();
+  });
+}
+
 export function registerQueryCommands(register: Register, services: CommandServices): void {
+  register('dbclient.query.showHistory', async () => {
+    const storage = historyStorage;
+    if (!storage) {
+      return;
+    }
+    let state = readHistoryState(storage);
+    if (!state.enabled) {
+      const choice = await vscode.window.showInformationMessage('DataDock query history recording is disabled.', 'Enable');
+      if (choice === 'Enable') {
+        state = setHistoryEnabled(state, true);
+        await writeHistoryState(storage, state);
+        void vscode.window.showInformationMessage('DataDock: query history recording enabled.');
+      }
+      return;
+    }
+    if (state.entries.length === 0) {
+      void vscode.window.showInformationMessage('Query history is empty. Run a SQL query to record it.');
+      return;
+    }
+    await showHistoryPicker(services, storage, state);
+  });
+
+  register('dbclient.query.toggleHistory', async () => {
+    const storage = historyStorage;
+    if (!storage) {
+      return;
+    }
+    const state = readHistoryState(storage);
+    const next = setHistoryEnabled(state, !state.enabled);
+    await writeHistoryState(storage, next);
+    void vscode.window.showInformationMessage(`DataDock: query history recording ${next.enabled ? 'enabled' : 'disabled'}.`);
+  });
+
   register('dbclient.query.open', async () => {
     const document = await vscode.workspace.openTextDocument({
       language: 'sql',

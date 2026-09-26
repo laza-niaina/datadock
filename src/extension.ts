@@ -21,6 +21,7 @@ import type { SessionStatus } from './connections/connectionManager';
 import { DatabaseExplorerProvider } from './explorer/databaseExplorerProvider';
 import { ConnectionNode } from './explorer/nodes';
 import { MetadataCache } from './metadata/metadataCache';
+import { initQueryHistory } from './commands/queryCommands';
 import { initSqlFileAssociations } from './sql/sqlFileState';
 import { SqlBlockCodeLensProvider } from './sql/sqlCodeLens';
 import { combinedSqlStatusText, sqlStatusLabels } from './util/engineDisplay';
@@ -116,6 +117,10 @@ export function activate(context: vscode.ExtensionContext): void {
   // SQL editor, the status bar and the CodeLens share one view, with nothing
   // written into the .sql file itself.
   const associations = initSqlFileAssociations(context.workspaceState);
+
+  // Query history: recorded executions persist in workspaceState (ids and SQL
+  // only, never a credential) and are browsed by `dbclient.query.showHistory`.
+  initQueryHistory(context.workspaceState);
 
   const sqliteFilePath = (profile: { engine: string; options?: Record<string, unknown> }): string | undefined => {
     const path = profile.options?.filePath;

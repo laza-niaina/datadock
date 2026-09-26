@@ -168,6 +168,18 @@
         "category": "DataDock"
       },
       {
+        "command": "dbclient.query.showHistory",
+        "title": "Show Query History",
+        "category": "DataDock",
+        "icon": "$(history)"
+      },
+      {
+        "command": "dbclient.query.toggleHistory",
+        "title": "Toggle Query History Recording",
+        "category": "DataDock",
+        "icon": "$(record)"
+      },
+      {
         "command": "dbclient.query.runStatement",
         "title": "Run This Query",
         "category": "DataDock",
@@ -184,6 +196,12 @@
         "title": "Refresh",
         "category": "DataDock",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "dbclient.explorer.quickOpen",
+        "title": "Go to Table...",
+        "category": "DataDock",
+        "icon": "$(search)"
       },
       {
         "command": "dbclient.explorer.showOutput",
@@ -204,6 +222,12 @@
         "icon": "$(clippy)"
       },
       {
+        "command": "dbclient.node.copyQualifiedName",
+        "title": "Copy Qualified Name",
+        "category": "DataDock",
+        "icon": "$(clippy)"
+      },
+      {
         "command": "dbclient.node.refresh",
         "title": "Refresh",
         "category": "DataDock",
@@ -214,6 +238,11 @@
       "view/title": [
         {
           "command": "dbclient.connection.add",
+          "when": "view == dbclient.explorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dbclient.explorer.quickOpen",
           "when": "view == dbclient.explorer",
           "group": "navigation@1"
         },
@@ -288,6 +317,11 @@
           "command": "dbclient.node.copyName",
           "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.(database|schema|folder|table|view|column|routine)$/",
           "group": "2_copy@1"
+        },
+        {
+          "command": "dbclient.node.copyQualifiedName",
+          "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.(table|view|column|routine)$/",
+          "group": "2_copy@2"
         }
       ],
       "editor/context": [
@@ -305,6 +339,11 @@
           "command": "dbclient.query.selectConnection",
           "when": "editorLangId == sql",
           "group": "2_connection@1"
+        },
+        {
+          "command": "dbclient.query.showHistory",
+          "when": "editorLangId == sql",
+          "group": "3_tools@1"
         }
       ],
       "editor/title": [
@@ -386,6 +425,14 @@
           "when": "editorLangId == sql"
         },
         {
+          "command": "dbclient.query.showHistory",
+          "when": "editorLangId == sql"
+        },
+        {
+          "command": "dbclient.query.toggleHistory",
+          "when": "editorLangId == sql"
+        },
+        {
           "command": "dbclient.query.runStatement",
           "when": "false"
         }
@@ -423,6 +470,11 @@
           ],
           "default": "info",
           "description": "Verbosity of the DataDock output channel. Passwords and private keys are never written to the log regardless of this setting."
+        },
+        "dbclient.resultGrid.compact": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Render the result grid with compact 28px rows (DBCode-style density). The toggle in the result toolbar flips this setting for all future result views."
         }
       }
     }

@@ -13,6 +13,7 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { getEngineIcon } from '../ui/icons';
+import { folderCountLabel, folderTooltip } from './explorerSearch';
 import type { ConnectionManager, SessionStatus } from '../connections/connectionManager';
 import type { ConnectionStore } from '../connections/connectionStore';
 import type { DriverRegistry } from '../db/driverRegistry';
@@ -319,6 +320,11 @@ export class SchemaNode extends ExplorerNode {
 }
 
 export class FolderNode extends ExplorerNode {
+  /** Object count of the last successful load; shown as the folder description. */
+  count?: number;
+  /** Guards the one-shot repaint that publishes the count to the view. */
+  countAnnounced?: boolean;
+
   constructor(
     readonly ref: SchemaRef,
     readonly folder: FolderKind,
@@ -340,6 +346,7 @@ export class FolderNode extends ExplorerNode {
       const relations = await services.cache.getOrLoad(this.cachePrefix(), () => driver.listTables(this.ref));
       const wanted = this.folder === 'tables' ? 'table' : 'view';
       const selected = relations.filter((relation) => relation.kind === wanted);
+      this.applyCount(selected.length);
       if (selected.length === 0) {
         return [new MessageNode(`No ${this.folder} found`, undefined, 'info')];
       }
@@ -359,10 +366,18 @@ export class FolderNode extends ExplorerNode {
     const routines = await services.cache.getOrLoad(this.cachePrefix(), () => driver.listRoutines!(this.ref));
     const wantedKind = this.folder === 'procedures' ? 'procedure' : 'function';
     const selected = routines.filter((routine) => routine.kind === wantedKind);
+    this.applyCount(selected.length);
     if (selected.length === 0) {
       return [new MessageNode(`No ${this.folder} found`, undefined, 'info')];
     }
     return selected.map((routine) => new RoutineNode(this.ref, routine));
+  }
+
+  /** Records the object count as the right-aligned folder description. */
+  applyCount(count: number): void {
+    this.count = count;
+    this.description = folderCountLabel(count);
+    this.tooltip = folderTooltip(this.folder, count);
   }
 
   cachePrefix(): string {

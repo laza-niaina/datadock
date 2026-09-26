@@ -11,7 +11,7 @@
 import * as vscode from 'vscode';
 import type { SessionStatus } from '../connections/connectionManager';
 import type { ConnectionProfile } from '../db/types';
-import { ConnectionNode, ExplorerNode, MessageNode, cacheKey, type ExplorerServices } from './nodes';
+import { ConnectionNode, ExplorerNode, FolderNode, MessageNode, cacheKey, type ExplorerServices } from './nodes';
 
 export class DatabaseExplorerProvider implements vscode.TreeDataProvider<ExplorerNode> {
   private readonly changed = new vscode.EventEmitter<ExplorerNode | undefined | void>();
@@ -40,12 +40,27 @@ export class DatabaseExplorerProvider implements vscode.TreeDataProvider<Explore
       return this.rootNodes();
     }
     try {
-      return await element.getChildren(this.services);
+      const children = await element.getChildren(this.services);
+      this.announceFolderCount(element);
+      return children;
     } catch (error) {
       // A node that fails to expand shows the reason inline instead of
       // collapsing with a silent error in the developer tools.
       const message = error instanceof Error ? error.message : String(error);
       return [new MessageNode('Failed to load', message, 'error', 'error')];
+    }
+  }
+
+  /**
+   * Folder counts are only known after the children loaded, which happens
+   * after the folder row was drawn; repaint the row exactly once so the
+   * `Tables (12)` description appears without a manual refresh. The repaint
+   * re-reads the cached children, so it cannot loop.
+   */
+  private announceFolderCount(element: ExplorerNode): void {
+    if (element instanceof FolderNode && element.count !== undefined && !element.countAnnounced) {
+      element.countAnnounced = true;
+      this.changed.fire(element);
     }
   }
 

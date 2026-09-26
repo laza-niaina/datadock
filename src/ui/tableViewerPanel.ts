@@ -30,6 +30,7 @@ import { globalRedactor } from '../util/redaction';
 import type { GridCell, GridColumn, GridExportFormat, GridFilter } from './dataGrid/dataGridModel';
 import { GRID_PAGE_SIZE, exportFileName, renderGridExport, serializeGridValue } from './dataGrid/dataGridModel';
 import { renderDataGridPage, escapeHtml, type GridViewGrid } from './dataGrid/dataGridView';
+import { compactGridSetting, writeCompactGridSetting } from './resultGridSettings';
 import { panelIconUri, resultViewAssets, resultViewWebviewOptions } from './resultView/resultHost';
 
 interface TableViewerOptions {
@@ -45,7 +46,9 @@ type TableViewerMessage =
   | { type: 'refresh'; search?: unknown }
   | { type: 'page'; offset: unknown }
   | { type: 'apply'; search?: unknown; filters?: unknown; sort?: unknown }
-  | { type: 'export'; format?: unknown; target?: unknown };
+  | { type: 'export'; format?: unknown; target?: unknown }
+  | { type: 'copy'; text?: unknown }
+  | { type: 'setCompact'; compact?: unknown };
 
 const VALID_OPERATORS = new Set(['=', '!=', '<', '<=', '>', '>=', 'LIKE', 'NOT LIKE', 'IS NULL', 'IS NOT NULL']);
 
@@ -192,6 +195,21 @@ export class TableViewerPanel {
         await this.export(value.target === 'editor', format);
         return;
       }
+      case 'copy': {
+        // Copy As payloads are rendered in the webview from displayed cells.
+        const text = typeof value.text === 'string' ? value.text : '';
+        if (text !== '') {
+          await vscode.env.clipboard.writeText(text);
+        }
+        return;
+      }
+      case 'setCompact': {
+        // Persist the density toggle; the webview already applied it locally.
+        if (typeof value.compact === 'boolean') {
+          await writeCompactGridSetting(value.compact);
+        }
+        return;
+      }
       default:
         return;
     }
@@ -263,6 +281,7 @@ export class TableViewerPanel {
       pageCount: this.pageCount(),
       totalRows: this.page?.totalRows,
       cost: `Page size ${this.request.limit}`,
+      compact: compactGridSetting(),
     };
     return renderDataGridPage(resultViewAssets(this.panel.webview), view, this.options.title);
   }

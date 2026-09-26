@@ -1,11 +1,15 @@
 /* DataDock result webview theme.
  *
- * Adapted from the reference "Database Client" result chain (MIT):
- * `public/theme/umyui.css` + `src/vue/result/view.css` + `auto.css`:
- *  - rows 35px, cells centered with `margin: auto`, index column green,
- *    header weight 400 and placeholderForeground type line;
- *  - toolbar compact: search 200px, cost text, small pager;
- *  - cells and values stay selectable, no ellipsis.
+ * Total redesign copied from the two peer VS Code database clients:
+ *  - **Database Client** (`cweijan/vscode-database-client`, MIT -
+ *    `public/theme/umyui.css` + `src/vue/result/view.css` + Toolbar /
+ *    Row_Header components): compact toolbar (search 200px "Input To Search
+ *    Data", Cost: Xms, small pager), two-line column header (name weight 500
+ *    over a muted type line), index column green, striped rows, cells stay
+ *    selectable, no ellipsis.
+ *  - **DBCode** (`dbcodeio/public` docs): summary chips for the connection /
+ *    database context, statement result tabs with status marks and the grid
+ *    right-click **Copy As** menu (Selection / All, one payload per format).
  *
  * This stylesheet never uses `@font-face`, icon fonts, `content:` or
  * `::before`/`::after` glyph icons, and no emoji. Every mark is a hand-drawn
@@ -28,7 +32,10 @@
   --dd-green: var(--vscode-charts-green);
   --dd-red: var(--vscode-errorForeground);
   --dd-widget-bg: var(--vscode-editorWidget-background);
-  --dd-stripe: var(--vscode-input-background);
+  /* Zebra + header tone: `editorWidget-background` lifts one subtle step above
+     the editor surface in BOTH themes (`input-background` is white in light
+     themes, which would make stripes invisible on a white editor). */
+  --dd-stripe: var(--vscode-editorWidget-background);
   color-scheme: light dark;
 }
 
@@ -60,24 +67,49 @@ body {
 .dd-head {
   padding: 6px 12px 2px;
 }
+
 .dd-head-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  font-size: 12px;
+  color: var(--dd-muted);
+}
+
+/* summary chips (connection context, DBCode info line) */
+.dd-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  max-width: 320px;
+  padding: 0 9px;
+  border: 1px solid var(--dd-border);
+  border-radius: 10px;
+  background: var(--dd-widget-bg);
+  font-size: 11px;
+  color: var(--dd-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dd-tag.is-primary {
+  color: var(--dd-primary);
+  border-color: var(--dd-primary);
+}
+
+.dd-tag.is-error {
+  color: var(--dd-red);
+  border-color: var(--dd-red);
+}
+
+.dd-stat {
   font-size: 12px;
   color: var(--dd-muted);
   white-space: nowrap;
-  overflow: hidden;
 }
-.dd-head-sep {
-  opacity: 0.7;
-}
-.dd-head-db {
-  color: var(--dd-fg);
-}
-.dd-head-error {
-  color: var(--dd-red);
-}
+
 .dd-notices {
   margin: 2px 0 0;
   padding: 0;
@@ -97,6 +129,7 @@ body {
   border-bottom: 1px solid var(--dd-border);
   flex: none;
 }
+
 .dd-tab {
   appearance: none;
   background: transparent;
@@ -112,26 +145,34 @@ body {
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
 }
+
 .dd-tab:hover {
   color: var(--dd-fg);
   background: var(--dd-hover);
 }
+
 .dd-tab.is-active {
   color: var(--dd-primary);
   border-bottom-color: var(--dd-primary);
+  background: var(--dd-hover);
+  font-weight: 600;
 }
+
 .dd-tab-mark {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   flex: none;
 }
+
 .dd-tab-mark.is-error {
   background: var(--dd-red);
 }
+
 .dd-tab-mark.is-mutation {
   background: var(--dd-green);
 }
+
 .dd-tab-mark.is-skipped {
   background: var(--dd-muted);
 }
@@ -144,14 +185,31 @@ body {
   padding: 5px 10px;
   min-height: 32px;
   flex: none;
+  border-bottom: 1px solid var(--dd-border);
 }
+
+.dd-sep {
+  width: 1px;
+  height: 16px;
+  flex: none;
+  margin: 0 2px;
+  background: var(--dd-border);
+}
+
 .dd-engine {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 22px;
   height: 22px;
   margin-right: 2px;
   flex: none;
+  padding: 3px;
+  background: #fff;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(127, 127, 127, 0.35);
 }
+
 .dd-engine svg {
   width: 100%;
   height: 100%;
@@ -160,6 +218,7 @@ body {
 .dd-icon {
   display: inline-flex;
 }
+
 .dd-icon svg {
   display: block;
 }
@@ -171,16 +230,19 @@ body {
   width: 200px;
   flex: none;
 }
+
 .dd-search-icon {
   position: absolute;
   left: 7px;
   color: var(--dd-muted);
   pointer-events: none;
 }
+
 .dd-search-icon svg {
   width: 13px;
   height: 13px;
 }
+
 .dd-search input {
   width: 100%;
   box-sizing: border-box;
@@ -194,9 +256,11 @@ body {
   font-family: inherit;
   outline: none;
 }
+
 .dd-search input:focus {
   border-color: var(--dd-focus);
 }
+
 .dd-search-clear {
   appearance: none;
   position: absolute;
@@ -212,9 +276,11 @@ body {
   align-items: center;
   justify-content: center;
 }
+
 .dd-search-clear:hover {
   color: var(--dd-fg);
 }
+
 .dd-search-clear svg {
   width: 12px;
   height: 12px;
@@ -234,13 +300,16 @@ body {
   color: var(--dd-muted);
   padding: 0;
 }
+
 .dd-btn:hover {
-  color: var(--dd-fg);
+  color: var(--dd-primary);
   background: var(--dd-hover);
 }
+
 .dd-btn.is-active {
   color: var(--dd-primary);
 }
+
 .dd-btn svg {
   width: 14px;
   height: 14px;
@@ -249,6 +318,7 @@ body {
 .dd-spacer {
   flex: 1;
 }
+
 .dd-cost {
   font-size: 12px;
   color: var(--dd-muted);
@@ -268,22 +338,26 @@ body {
 
 /* banners ------------------------------------------------------------------- */
 .dd-banner {
-  margin: 4px 10px 0;
-  padding: 6px 10px;
-  border-radius: 2px;
+  margin: 6px 10px 0;
+  padding: 7px 10px;
+  border-radius: 3px;
   font-size: 12px;
   border: 1px solid var(--dd-border);
+  border-left: 5px solid var(--dd-muted);
+  background: var(--vscode-textBlockQuote-background, var(--dd-widget-bg));
   overflow-x: auto;
   white-space: pre-wrap;
   flex: none;
 }
+
 .dd-banner-error {
   color: var(--dd-red);
-  border-color: var(--dd-red);
+  border-left-color: var(--dd-red);
 }
+
 .dd-banner-info {
   color: var(--dd-fg);
-  background: var(--dd-widget-bg);
+  border-left-color: var(--vscode-charts-blue, var(--dd-primary));
 }
 
 /* grid host + fade ------------------------------------------------------------ */
@@ -292,14 +366,17 @@ body {
   min-height: 0;
   overflow: hidden;
 }
+
 .dd-fade-enter-active,
 .dd-fade-leave-active {
   transition: opacity 150ms ease;
 }
+
 .dd-fade-enter,
 .dd-fade-leave-to {
   opacity: 0;
 }
+
 .dd-empty {
   display: flex;
   align-items: center;
@@ -307,6 +384,7 @@ body {
   height: 100%;
   color: var(--dd-muted);
   font-size: 12px;
+  opacity: 0.85;
 }
 
 ux-grid {
@@ -314,86 +392,194 @@ ux-grid {
 }
 
 /* grid (umy-table DOM classes, overrides per the reference umyui.css) -------- */
-.plx-header--column.col--ellipsis > .plx-cell .plx-cell--title {
+.plx-header--column.col--ellipsis>.plx-cell .plx-cell--title {
   font-weight: 400;
 }
+
 .plx-cell--title {
   width: 100%;
 }
+
 .plx-cell,
 .plx-cell--title {
   text-overflow: unset !important;
   overflow: hidden !important;
   white-space: nowrap !important;
 }
+
 .plx-cell {
   padding: 0 !important;
-  text-align: center !important;
+  text-align: left !important;
 }
+
 .plx-cell span {
-  margin: auto !important;
   line-height: 16px;
 }
+
 .plx-cell .plx-cell--title {
   user-select: text !important;
 }
+
 .col--index {
   color: var(--dd-green);
 }
+
 .plx-table .plx-table--body-wrapper {
   background: var(--vscode-editor-background);
 }
+
 .plx-table .plx-table--header-wrapper {
   background: var(--dd-stripe) !important;
   color: var(--dd-fg) !important;
 }
-.plx-body--row {
-  background: var(--vscode-editor-background);
+
+/*
+ * Row states. umy-table's theme-chalk hardcodes light-theme colours at
+ * specificity 0,2,0 (`.plx-table .plx-body--row`), so every override here
+ * matches that specificity and is declared later (it wins the cascade tie).
+ * The striped variants must also be present, or `theme-chalk`'s `#fafafa`
+ * shows through on even rows.
+ */
+.plx-table .plx-body--row {
+  background-color: var(--vscode-editor-background);
   color: var(--dd-fg);
 }
-.plx-body--row.row--stripe {
-  background: var(--dd-stripe) !important;
+
+/* Alternation survives: the striped variant must repaint at equal specificity. */
+.plx-table .plx-body--row.row--stripe {
+  background-color: var(--dd-stripe);
 }
-.plx-body--row.row--hover,
-.plx-body--row.row--checked,
-.plx-body--row.row--current {
-  background: var(--dd-hover) !important;
-  color: var(--dd-fg) !important;
+
+/* Hover: one subtle step up from the base row, never transparent. */
+.plx-table .plx-body--row.row--hover,
+.plx-table .plx-body--row.row--hover.row--stripe {
+  background-color: var(--dd-hover);
+  color: var(--dd-fg);
 }
-.plx-body--column {
+
+/* Selection (checked/current) wins over hover, including hover + selection. */
+.plx-table .plx-body--row.row--checked,
+.plx-table .plx-body--row.row--current,
+.plx-table .plx-body--row.row--cheched,
+.plx-table .plx-body--row.row--hover.row--checked,
+.plx-table .plx-body--row.row--hover.row--current,
+.plx-table .plx-body--row.row--hover.row--cheched {
+  background-color: var(--vscode-list-activeSelectionBackground, var(--dd-hover));
+  color: var(--vscode-list-activeSelectionForeground, var(--dd-fg));
+}
+
+/* Current-column cell: same selection token, no light-blue leak. */
+.plx-table .plx-body--column.col--current {
+  background-color: var(--vscode-list-activeSelectionBackground, var(--dd-hover));
+  color: var(--vscode-list-activeSelectionForeground, var(--dd-fg));
+}
+
+.plx-table .plx-body--column {
   border: 1px solid var(--vscode-textBlockQuote-background) !important;
   user-select: text !important;
+}
+
+/*
+ * Compact density (DBCode-like higher row count per screen). The class lives
+ * on `.dd-grid-host` (the real host element around the ux-grid component)
+ * and the custom property inherits into the table subtree. `theme-chalk`
+ * pins mini rows at 36px with `.plx-table.size--mini .plx-body--column…`
+ * (0,3,0); the rules below match that specificity and win by coming later.
+ */
+.dd-grid-host--compact {
+  --dd-compact-row: 28px;
+}
+
+.dd-grid-host--compact .plx-table.size--mini .plx-body--column,
+.dd-grid-host--compact .plx-table.size--mini .plx-header--column {
+  height: var(--dd-compact-row);
+  /* umy cells keep content-box sizing, so the 1px borders would otherwise
+     add 2px to every row. */
+  box-sizing: border-box;
+}
+
+/* `theme-chalk` pins the ellipsis cells with four classes (0,4,0), so this
+   override needs the same to take effect. */
+.dd-grid-host--compact .plx-table.size--mini .plx-body--column.col--ellipsis,
+.dd-grid-host--compact .plx-table.size--mini .plx-header--column.col--ellipsis {
+  height: var(--dd-compact-row);
+}
+
+.dd-grid-host--compact .plx-table.size--mini .plx-body--column.col--ellipsis .plx-cell,
+.dd-grid-host--compact .plx-table.size--mini .plx-header--column.col--ellipsis .plx-cell {
+  max-height: var(--dd-compact-row);
+}
+
+.dd-grid-host--compact .plx-cell--title {
+  line-height: 20px;
+}
+
+.dd-grid-host--compact .dd-col-header {
+  padding: 2px 6px;
+  gap: 0;
+}
+
+.dd-grid-host--compact .dd-col-type {
+  display: none;
+}
+
+.dd-grid-host--compact .plx-cell span {
+  line-height: 20px;
 }
 
 /* custom header / cell content ----------------------------------------------- */
 .dd-col-header {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 1px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 6px;
 }
+
+.dd-col-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
 .dd-col-name {
   font-weight: 500;
   color: var(--dd-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
 .dd-col-type {
   font-size: 11px;
   font-weight: 400;
   color: var(--vscode-input-placeholderForeground);
 }
+
 .dd-col-filter {
   width: 18px;
   height: 16px;
   margin-top: 1px;
 }
+
 .dd-col-filter svg {
   width: 11px;
   height: 11px;
 }
+
 .dd-cell {
   line-height: 33px;
   padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
 .dd-null {
   color: #666;
 }
@@ -404,6 +590,7 @@ ux-grid {
   inset: 0;
   z-index: 100;
 }
+
 .dd-popover {
   position: fixed;
   z-index: 101;
@@ -417,6 +604,7 @@ ux-grid {
   font-size: 12px;
   color: var(--dd-fg);
 }
+
 .dd-popover-title {
   font-size: 11px;
   text-transform: uppercase;
@@ -425,6 +613,7 @@ ux-grid {
   margin: 0 0 6px;
   font-weight: 500;
 }
+
 .dd-col-list {
   display: flex;
   flex-direction: column;
@@ -432,27 +621,32 @@ ux-grid {
   max-height: 240px;
   overflow: auto;
 }
+
 .dd-col-list label {
   display: flex;
   align-items: center;
   gap: 6px;
   cursor: pointer;
 }
+
 .dd-col-list input {
   accent-color: var(--dd-primary);
   margin: 0;
 }
+
 .dd-popover-actions {
   display: flex;
   justify-content: flex-end;
   gap: 6px;
   margin-top: 8px;
 }
+
 .dd-chips {
   display: flex;
   gap: 4px;
   flex-wrap: wrap;
 }
+
 .dd-chip {
   appearance: none;
   border: 1px solid var(--dd-border);
@@ -464,18 +658,22 @@ ux-grid {
   padding: 3px 8px;
   cursor: pointer;
 }
+
 .dd-chip:hover {
   color: var(--dd-fg);
 }
+
 .dd-chip.is-selected {
   color: var(--dd-fg);
   border-color: var(--dd-primary);
   background: var(--dd-hover);
 }
+
 .dd-chip:disabled {
   opacity: 0.45;
   cursor: default;
 }
+
 .dd-btn-primary {
   appearance: none;
   border: 1px solid var(--vscode-button-border, transparent);
@@ -487,6 +685,7 @@ ux-grid {
   padding: 3px 10px;
   cursor: pointer;
 }
+
 .dd-btn-secondary {
   appearance: none;
   border: 1px solid var(--dd-border);
@@ -498,18 +697,89 @@ ux-grid {
   padding: 3px 10px;
   cursor: pointer;
 }
+
 .dd-btn-secondary:hover {
   background: var(--dd-hover);
 }
+
+/* Copy As context menu (DBCode grid right-click) ------------------------------ */
+.dd-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+}
+
+.dd-menu {
+  position: fixed;
+  z-index: 121;
+  min-width: 174px;
+  max-width: 280px;
+  padding: 4px;
+  border: 1px solid var(--vscode-menu-border, var(--dd-border));
+  border-radius: 4px;
+  background: var(--vscode-menu-background, var(--dd-widget-bg));
+  color: var(--vscode-menu-foreground, var(--dd-fg));
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+}
+
+.dd-menu-formats {
+  min-width: 210px;
+}
+
+.dd-menu-item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  text-align: left;
+  padding: 5px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.dd-menu-item:hover,
+.dd-menu-item.is-active {
+  background: var(--vscode-menu-selectionBackground, var(--dd-hover));
+  color: var(--vscode-menu-selectionForeground, var(--dd-fg));
+}
+
+.dd-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--vscode-menu-separatorBackground, var(--dd-border));
+}
+
+.dd-menu-item .dd-icon {
+  color: currentColor;
+}
+
+.dd-menu-caret svg {
+  width: 11px;
+  height: 11px;
+}
+
 .dd-filter-form {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
+
 .dd-filter-form p {
   margin: 0;
   color: var(--dd-muted);
 }
+
 .dd-filter-form select,
 .dd-filter-form input {
   box-sizing: border-box;
@@ -523,6 +793,7 @@ ux-grid {
   padding: 0 6px;
   outline: none;
 }
+
 .dd-filter-form select:focus,
 .dd-filter-form input:focus {
   border-color: var(--dd-focus);
@@ -534,13 +805,16 @@ ux-grid {
   width: 12px;
   height: 12px;
 }
+
 ::-webkit-scrollbar-thumb {
   border-radius: 8px;
   background-color: var(--vscode-scrollbarSlider-background);
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background-color: var(--vscode-scrollbarSlider-hoverBackground);
 }
+
 ::-webkit-scrollbar-corner {
   background: transparent;
 }

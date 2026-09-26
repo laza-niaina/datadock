@@ -19,13 +19,29 @@
  * runtime build (no template compiler, no eval), and fonts are disabled, so the
  * vendored element-icons @font-face never loads.
  */
+import UmyTable from "umy-table";
+import "umy-table/lib/theme-chalk/index.css";
+import Vue, { type CreateElement, type VNode } from "vue";
+import type { EngineId } from "../../db/types";
+import {
+  getEngineIcon,
+  iconChevron,
+  iconClose,
+  iconFunnel,
+  iconRefresh,
+  iconReveal,
+} from "../icons";
+import type { GridColumn } from "../dataGrid/dataGridModel";
+import {
+  ALL_FORMATS,
+  SELECTION_FORMATS,
+  copyFormatLabel,
+  copyPayload,
+  type CopyFormat,
+} from "./copyFormats";
+import "./resultApp.css";
 
-import Vue, { type CreateElement, type VNode } from 'vue';
-import UmyTable from 'umy-table';
-import 'umy-table/lib/theme-chalk/index.css';
-import './resultApp.css';
-import { getEngineIcon, iconChevron, iconClose, iconFunnel, iconRefresh, iconReveal } from '../icons';
-import type { EngineId } from '../../db/types';
+Vue.use(UmyTable);
 
 declare global {
   interface Window {
@@ -45,7 +61,7 @@ interface GridViewGridInit {
   readonly id: string;
   readonly table: string;
   readonly label: string;
-  readonly status: 'ok' | 'error' | 'mutation' | 'skipped';
+  readonly status: "ok" | "error" | "mutation" | "skipped";
   readonly error?: string;
   readonly durationMs?: number;
   readonly rowsAffected?: number;
@@ -58,7 +74,7 @@ interface GridViewGridInit {
 
 interface GridSortInit {
   readonly column: string;
-  readonly direction: 'asc' | 'desc';
+  readonly direction: "asc" | "desc";
 }
 
 interface QueryMetaInit {
@@ -72,11 +88,17 @@ interface QueryMetaInit {
 }
 
 interface ResultInit {
-  readonly mode: 'query' | 'table';
+  readonly mode: "query" | "table";
   readonly grids: readonly GridViewGridInit[];
   readonly activeIndex: number;
   readonly engine?: string;
-  readonly filters?: readonly { column: string; operator: string; value?: string }[];
+  /** Persisted density preference delivered by the host page shell. */
+  readonly compact?: boolean;
+  readonly filters?: readonly {
+    column: string;
+    operator: string;
+    value?: string;
+  }[];
   readonly sort?: GridSortInit;
   readonly search?: string;
   readonly pageIndex?: number;
@@ -87,9 +109,20 @@ interface ResultInit {
   readonly query?: QueryMetaInit;
 }
 
-type GridFormat = 'csv' | 'json' | 'sql' | 'markdown';
-const FORMATS: readonly GridFormat[] = ['csv', 'json', 'sql', 'markdown'];
-const OPERATORS = ['=', '!=', '<', '<=', '>', '>=', 'LIKE', 'NOT LIKE', 'IS NULL', 'IS NOT NULL'] as const;
+type GridFormat = "csv" | "json" | "sql" | "markdown";
+const FORMATS: readonly GridFormat[] = ["csv", "json", "sql", "markdown"];
+const OPERATORS = [
+  "=",
+  "!=",
+  "<",
+  "<=",
+  ">",
+  ">=",
+  "LIKE",
+  "NOT LIKE",
+  "IS NULL",
+  "IS NOT NULL",
+] as const;
 
 // --- vscode bridge -----------------------------------------------------------
 
@@ -97,23 +130,26 @@ function postMessage(message: unknown): void {
   window.acquireVsCodeApi?.()?.postMessage(message);
 }
 
-// --- local SVGs (geometric, currentColor, no glyph icons) ----------------------
+// --- local SVGs --------------------------------------------------------------
+
 const SEARCH_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.6 10.6 14 14"/></svg>';
 const DOWNLOAD_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v7"/><path d="M5 6.5l3 3 3-3"/><path d="M3.5 12.5h9"/></svg>';
 const COLUMNS_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="3" y="3" width="3.2" height="10" rx="0.7"/><rect x="6.4" y="3" width="3.2" height="10" rx="0.7"/><rect x="9.8" y="3" width="3.2" height="10" rx="0.7"/></svg>';
+const COPY_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2.7" y="2.7" width="8" height="8" rx="1.5"/><path d="M5.6 13.3h7.7V5.6"/></svg>';
+const DENSITY_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 4h11"/><path d="M2.5 8h11"/><path d="M2.5 12h11"/></svg>';
 
-/** Geometric icon wrapper: a span carrying the inline SVG (never an icon font). */
 function iconVNode(h: CreateElement, svg: string, className?: string): VNode {
-  const classes = className ? ['dd-icon', className] : 'dd-icon';
-  return h('span', { class: classes, domProps: { innerHTML: svg } });
+  const classes = className ? ["dd-icon", className] : "dd-icon";
+  return h("span", { class: classes, domProps: { innerHTML: svg } });
 }
 
 // --- data helpers --------------------------------------------------------------
 
-/** Column metadata with a unique row-key per column (duplicate names → `name__N`). */
 interface Field {
   readonly field: string;
   readonly name: string;
@@ -127,11 +163,18 @@ function fieldsFor(columns: readonly GridColumnInit[]): Field[] {
     seen.set(column.name, count + 1);
     return count === 0
       ? { field: column.name, name: column.name, type: column.type }
-      : { field: `${column.name}__${count}`, name: column.name, type: column.type };
+      : {
+          field: `${column.name}__${count}`,
+          name: column.name,
+          type: column.type,
+        };
   });
 }
 
-function rowsFor(grid: GridViewGridInit, fields: readonly Field[]): Record<string, GridCellValue>[] {
+function rowsFor(
+  grid: GridViewGridInit,
+  fields: readonly Field[],
+): Record<string, GridCellValue>[] {
   return grid.rows.map((cells) => {
     const row: Record<string, GridCellValue> = {};
     fields.forEach((field, index) => {
@@ -142,22 +185,18 @@ function rowsFor(grid: GridViewGridInit, fields: readonly Field[]): Record<strin
 }
 
 function compareCells(a: GridCellValue, b: GridCellValue): number {
-  if (a == null) {
-    return b == null ? 0 : 1;
-  }
-  if (b == null) {
-    return -1;
-  }
-  if (typeof a === 'number' && typeof b === 'number') {
-    return a - b;
-  }
+  if (a == null) return b == null ? 0 : 1;
+  if (b == null) return -1;
+  if (typeof a === "number" && typeof b === "number") return a - b;
   const left = String(a);
   const right = String(b);
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-/** Reference computeWidth: max(name, first rows, type) x10, clamped [70, 150]. */
-function computeWidth(field: Field, rows: readonly Record<string, GridCellValue>[]): number {
+function computeWidth(
+  field: Field,
+  rows: readonly Record<string, GridCellValue>[],
+): number {
   let longest = field.name.length;
   if (field.type) {
     longest = Math.max(longest, field.type.length);
@@ -172,43 +211,46 @@ function computeWidth(field: Field, rows: readonly Record<string, GridCellValue>
   return Math.min(150, Math.max(70, longest * 10));
 }
 
-/** Extracts the cell value from the umy-table default slot scope. */
 function readScopeValue(scope: unknown): GridCellValue {
-  if (!scope || typeof scope !== 'object') {
-    return null;
-  }
-  const candidate = scope as { row?: Record<string, unknown>; column?: { property?: unknown; field?: unknown; title?: unknown } };
+  if (!scope || typeof scope !== "object") return null;
+  const candidate = scope as {
+    row?: Record<string, unknown>;
+    column?: { property?: unknown; field?: unknown; title?: unknown };
+  };
   const column = candidate.column;
-  if (!candidate.row || !column) {
-    return null;
-  }
+  if (!candidate.row || !column) return null;
   const rawKey =
-    typeof column.property === 'string'
+    typeof column.property === "string"
       ? column.property
-      : typeof column.field === 'string'
+      : typeof column.field === "string"
         ? column.field
-        : typeof column.title === 'string'
+        : typeof column.title === "string"
           ? column.title
           : undefined;
-  if (!rawKey) {
-    return null;
-  }
+  if (!rawKey) return null;
   const value = candidate.row[rawKey];
-  return value === null || value === undefined || typeof value === 'string' || typeof value === 'number' ? (value as GridCellValue) : null;
+  return value === null ||
+    value === undefined ||
+    typeof value === "string" ||
+    typeof value === "number"
+    ? (value as GridCellValue)
+    : null;
 }
 
 // --- init ----------------------------------------------------------------------
 
 const initial = window.__DATADOCK_RESULT__;
 const init: ResultInit =
-  initial && typeof initial === 'object' ? (initial as ResultInit) : { mode: 'query', grids: [], activeIndex: 0 };
-const isTableMode = init.mode === 'table';
+  initial && typeof initial === "object"
+    ? (initial as ResultInit)
+    : { mode: "query", grids: [], activeIndex: 0 };
+const isTableMode = init.mode === "table";
 
-// --- component types ------------------------------------------------------------
+// --- interfaces ----------------------------------------------------------------
 
 interface ClientSort {
   readonly column: string;
-  readonly direction: 'asc' | 'desc';
+  readonly direction: "asc" | "desc";
 }
 
 interface FilterRow {
@@ -228,6 +270,27 @@ interface PopoverRect {
   readonly top: number;
 }
 
+/** Open Copy As context menu: anchor point plus the hovered flyout level. */
+interface CopyMenuState {
+  readonly left: number;
+  readonly top: number;
+  readonly section: "root" | "copyAs" | "selection" | "all";
+  /** Index of the right-clicked row in `displayRows`, or -1 for the toolbar. */
+  readonly rowIndex: number;
+}
+
+/** Resolves the data row under the pointer from the umy-table DOM. */
+function rowIndexOfTarget(target: EventTarget | null): number {
+  if (!target || !(target instanceof Element)) {
+    return -1;
+  }
+  const tr = target.closest("tr");
+  if (!tr || !tr.parentElement) {
+    return -1;
+  }
+  return Array.prototype.indexOf.call(tr.parentElement.children, tr);
+}
+
 interface DdData {
   active: number;
   search: string;
@@ -242,6 +305,8 @@ interface DdData {
   filterDraft?: FilterDraft;
   popoverRect?: PopoverRect;
   gridHostHeight: number;
+  copyMenu: CopyMenuState | null;
+  compact: boolean;
 }
 
 interface DdMethods {
@@ -254,7 +319,7 @@ interface DdMethods {
   closePopovers(): void;
   toggleColumn(name: string, checked: boolean): void;
   chooseFormat(format: GridFormat): void;
-  doExport(target: 'editor' | 'file'): void;
+  doExport(target: "editor" | "file"): void;
   revealSql(): void;
   refresh(): void;
   page(delta: number): void;
@@ -276,7 +341,14 @@ interface DdMethods {
   renderColumnsPopover(h: CreateElement): VNode;
   renderExportPopover(h: CreateElement): VNode;
   renderFilterPopover(h: CreateElement): VNode;
-  renderPopovers(h: CreateElement): VNode;
+  renderPopovers(h: CreateElement): VNode | null;
+  openCopyMenu(event: MouseEvent): void;
+  openCopyMenuFromButton(event: MouseEvent): void;
+  closeCopyMenu(): void;
+  setCopySection(section: CopyMenuState["section"]): void;
+  runCopy(format: CopyFormat | "quick"): void;
+  renderCopyMenu(h: CreateElement): VNode | null;
+  toggleCompact(): void;
 }
 
 interface DdComputed {
@@ -286,7 +358,7 @@ interface DdComputed {
   activeFields: Field[];
   displayRows: Record<string, GridCellValue>[];
   engineMark: string;
-  banner: { kind: 'error' | 'info'; text: string } | null;
+  banner: { kind: "error" | "info"; text: string } | null;
   canExportSql: boolean;
   showReveal: boolean;
   pagerLabel: string;
@@ -295,31 +367,117 @@ interface DdComputed {
 // --- component ------------------------------------------------------------------
 
 const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
-  el: '#app',
+  el: "#app",
 
   data(): DdData {
     return {
-      active: Math.min(Math.max(0, init.activeIndex), Math.max(0, init.grids.length - 1)),
-      search: init.search ?? '',
+      active: Math.min(
+        Math.max(0, init.activeIndex),
+        Math.max(0, init.grids.length - 1),
+      ),
+      search: init.search ?? "",
       hidden: [],
       columnsOpen: false,
       exportOpen: false,
-      exportFormat: 'csv',
-      filters: (init.filters ?? []).map((filter) => ({ column: filter.column, operator: filter.operator, value: filter.value ?? '' })),
+      exportFormat: "csv",
+      filters: (init.filters ?? []).map((filter) => ({
+        column: filter.column,
+        operator: filter.operator,
+        value: filter.value ?? "",
+      })),
       sort: init.sort,
       clientSort: undefined,
       pageIndex: init.pageIndex ?? 0,
       filterDraft: undefined,
       popoverRect: undefined,
       gridHostHeight: 300,
+      copyMenu: null,
+      compact: init.compact === true,
     };
+  },
+
+  computed: {
+    grid(): GridViewGridInit | null {
+      return init.grids[this.active] ?? null;
+    },
+    fields(): Field[] {
+      return this.grid ? fieldsFor(this.grid.columns) : [];
+    },
+    allRows(): Record<string, GridCellValue>[] {
+      return this.grid ? rowsFor(this.grid, this.fields) : [];
+    },
+    activeFields(): Field[] {
+      return this.fields.filter((f) => !this.hidden.includes(f.name));
+    },
+    displayRows(): Record<string, GridCellValue>[] {
+      let rows = [...this.allRows];
+      if (!isTableMode && this.search.trim() !== "") {
+        const q = this.search.toLowerCase();
+        rows = rows.filter((row) =>
+          Object.values(row).some(
+            (val) => val != null && String(val).toLowerCase().includes(q),
+          ),
+        );
+      }
+      if (!isTableMode && this.clientSort) {
+        const { column, direction } = this.clientSort;
+        rows.sort((a, b) => {
+          const res = compareCells(a[column], b[column]);
+          return direction === "asc" ? res : -res;
+        });
+      }
+      return rows;
+    },
+    engineMark(): string {
+      return init.engine ? getEngineIcon(init.engine as EngineId).svg : "";
+    },
+    banner(): { kind: "error" | "info"; text: string } | null {
+      const g = this.grid;
+      if (!g) return null;
+      if (g.status === "error" && g.error) {
+        return { kind: "error", text: g.error };
+      }
+      if (g.status === "mutation") {
+        return {
+          kind: "info",
+          text: `Query executed successfully. ${g.rowsAffected ?? 0} row(s) affected.`,
+        };
+      }
+      if (g.truncated) {
+        return {
+          kind: "info",
+          text: "Result set truncated to max allowed rows.",
+        };
+      }
+      return null;
+    },
+    canExportSql(): boolean {
+      return isTableMode || Boolean(this.grid?.table);
+    },
+    showReveal(): boolean {
+      return Boolean(this.grid?.reveal);
+    },
+    pagerLabel(): string {
+      if (isTableMode) {
+        const current = this.pageIndex + 1;
+        const total = Math.max(1, init.pageCount ?? 1);
+        return `${current} / ${total}`;
+      }
+      return `${this.displayRows.length} rows`;
+    },
   },
 
   mounted(): void {
     this.$nextTick(() => this.remeasure());
-    window.addEventListener('resize', () => this.remeasure());
+    window.addEventListener("resize", () => this.remeasure());
+    window.addEventListener("message", (event: MessageEvent) => {
+      const message = event.data as { type?: string; compact?: unknown } | undefined;
+      if (message && message.type === "setCompact" && typeof message.compact === "boolean") {
+        this.compact = message.compact;
+      }
+    });
     if (isTableMode) {
-      postMessage({ type: 'ready' });
+      postMessage({ type: "ready" });
     }
   },
 
@@ -334,12 +492,15 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
       this.search = value;
     },
     onSearchKeyup(event: KeyboardEvent): void {
-      if (isTableMode && (event.key === 'Enter' || event.key === 'NumpadEnter')) {
+      if (
+        isTableMode &&
+        (event.key === "Enter" || event.key === "NumpadEnter")
+      ) {
         this.applyQuery();
       }
     },
     clearSearch(): void {
-      this.search = '';
+      this.search = "";
       if (isTableMode) {
         this.applyQuery();
       }
@@ -359,17 +520,21 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
       this.popoverRect = undefined;
     },
     toggleColumn(name: string, checked: boolean): void {
-      this.hidden = checked ? this.hidden.filter((n) => n !== name) : [...this.hidden, name];
+      this.hidden = checked
+        ? this.hidden.filter((n) => n !== name)
+        : [...this.hidden, name];
     },
     chooseFormat(format: GridFormat): void {
       this.exportFormat = format;
     },
-    doExport(target: 'editor' | 'file'): void {
+    doExport(target: "editor" | "file"): void {
       const grid = this.grid;
-      if (!grid) {
-        return;
-      }
-      const message: Record<string, unknown> = { type: 'export', format: this.exportFormat, target };
+      if (!grid) return;
+      const message: Record<string, unknown> = {
+        type: "export",
+        format: this.exportFormat,
+        target,
+      };
       if (!isTableMode) {
         message.gridId = grid.id;
       }
@@ -379,20 +544,18 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
     revealSql(): void {
       const reveal = this.grid?.reveal;
       if (reveal) {
-        postMessage({ type: 'reveal', start: reveal.start, end: reveal.end });
+        postMessage({ type: "reveal", start: reveal.start, end: reveal.end });
       }
     },
     refresh(): void {
-      postMessage({ type: 'refresh', search: this.search });
+      postMessage({ type: "refresh", search: this.search });
     },
     page(delta: number): void {
       const total = Math.max(0, (init.pageCount ?? 1) - 1);
       const next = Math.min(Math.max(0, this.pageIndex + delta), total);
-      if (next === this.pageIndex) {
-        return;
-      }
+      if (next === this.pageIndex) return;
       this.pageIndex = next;
-      postMessage({ type: 'page', offset: next * (init.pageSize ?? 100) });
+      postMessage({ type: "page", offset: next * (init.pageSize ?? 100) });
     },
     openFilter(name: string, event: MouseEvent): void {
       let left = 20;
@@ -403,32 +566,38 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
         top = rect.bottom + 4;
       }
       const existing = this.filters.find((filter) => filter.column === name);
-      this.filterDraft = { column: name, operator: existing?.operator ?? '=', value: existing?.value ?? '' };
+      this.filterDraft = {
+        column: name,
+        operator: existing?.operator ?? "=",
+        value: existing?.value ?? "",
+      };
       this.popoverRect = { left: Math.min(left, window.innerWidth - 260), top };
       this.columnsOpen = false;
       this.exportOpen = false;
     },
     setFilterOperator(operator: string): void {
-      if (this.filterDraft) {
-        this.filterDraft.operator = operator;
-      }
+      if (this.filterDraft) this.filterDraft.operator = operator;
     },
     setFilterValue(value: string): void {
-      if (this.filterDraft) {
-        this.filterDraft.value = value;
-      }
+      if (this.filterDraft) this.filterDraft.value = value;
     },
     applyFilter(): void {
       const draft = this.filterDraft;
-      if (!draft) {
-        return;
-      }
-      const rest = this.filters.filter((filter) => filter.column !== draft.column);
+      if (!draft) return;
+      const rest = this.filters.filter(
+        (filter) => filter.column !== draft.column,
+      );
       const value = draft.value.trim();
-      if (draft.operator === 'IS NULL' || draft.operator === 'IS NOT NULL') {
-        this.filters = [...rest, { column: draft.column, operator: draft.operator, value: '' }];
-      } else if (value !== '') {
-        this.filters = [...rest, { column: draft.column, operator: draft.operator, value }];
+      if (draft.operator === "IS NULL" || draft.operator === "IS NOT NULL") {
+        this.filters = [
+          ...rest,
+          { column: draft.column, operator: draft.operator, value: "" },
+        ];
+      } else if (value !== "") {
+        this.filters = [
+          ...rest,
+          { column: draft.column, operator: draft.operator, value },
+        ];
       } else {
         this.filters = rest;
       }
@@ -437,153 +606,257 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
     },
     clearFilter(): void {
       const draft = this.filterDraft;
-      if (!draft) {
-        return;
-      }
-      this.filters = this.filters.filter((filter) => filter.column !== draft.column);
+      if (!draft) return;
+      this.filters = this.filters.filter(
+        (filter) => filter.column !== draft.column,
+      );
       this.closePopovers();
       this.applyQuery();
     },
     applyQuery(): void {
-      if (!isTableMode) {
-        return;
-      }
+      if (!isTableMode) return;
       this.pageIndex = 0;
       const filters = this.filters.map((filter) => ({
         column: filter.column,
         operator: filter.operator,
-        value: filter.operator === 'IS NULL' || filter.operator === 'IS NOT NULL' ? undefined : filter.value,
+        value:
+          filter.operator === "IS NULL" || filter.operator === "IS NOT NULL"
+            ? undefined
+            : filter.value,
       }));
-      const sort = this.sort ? { column: this.sort.column, direction: this.sort.direction } : undefined;
-      const message: Record<string, unknown> = { type: 'apply', search: this.search };
-      if (filters.length > 0) {
-        message.filters = filters;
-      }
-      if (sort) {
-        message.sort = sort;
-      }
+      const sort = this.sort
+        ? { column: this.sort.column, direction: this.sort.direction }
+        : undefined;
+      const message: Record<string, unknown> = {
+        type: "apply",
+        search: this.search,
+      };
+      if (filters.length > 0) message.filters = filters;
+      if (sort) message.sort = sort;
       postMessage(message);
     },
     onSortChange(event: unknown): void {
-      if (!event || typeof event !== 'object') {
-        return;
-      }
-      const candidate = event as { prop?: unknown; column?: { property?: unknown; title?: unknown }; order?: unknown };
+      if (!event || typeof event !== "object") return;
+      const candidate = event as {
+        prop?: unknown;
+        column?: { property?: unknown; title?: unknown };
+        order?: unknown;
+      };
       const rawProp =
-        typeof candidate.prop === 'string'
+        typeof candidate.prop === "string"
           ? candidate.prop
-          : typeof candidate.column?.property === 'string'
+          : typeof candidate.column?.property === "string"
             ? candidate.column.property
-            : typeof candidate.column?.title === 'string'
+            : typeof candidate.column?.title === "string"
               ? candidate.column.title
               : undefined;
-      const order = candidate.order === 'asc' || candidate.order === 'desc' ? candidate.order : undefined;
-      if (!rawProp) {
-        return;
-      }
+      const order =
+        candidate.order === "asc" || candidate.order === "desc"
+          ? candidate.order
+          : undefined;
+      if (!rawProp) return;
       const field = this.fields.find((f) => f.field === rawProp);
-      if (!field) {
-        return;
-      }
+      if (!field) return;
       if (isTableMode) {
-        this.sort = order ? { column: field.name, direction: order } : undefined;
+        this.sort = order
+          ? { column: field.name, direction: order }
+          : undefined;
         this.applyQuery();
       } else {
-        this.clientSort = order ? { column: field.field, direction: order } : undefined;
+        this.clientSort = order
+          ? { column: field.field, direction: order }
+          : undefined;
       }
     },
     cellVNode(h: CreateElement, scope: unknown): VNode {
       const value = readScopeValue(scope);
       const content: VNode =
-        value == null ? h('span', { class: 'dd-null' }, '(NULL)') : h('span', {}, String(value));
-      return h('div', { class: 'dd-cell' }, [content]);
+        value == null
+          ? h("span", { class: "dd-null" }, "(NULL)")
+          : h("span", {}, String(value));
+      return h("div", { class: "dd-cell" }, [content]);
+    },
+
+    // --- Copy As context menu (DBCode grid right-click) --------------------------
+    openCopyMenu(event: MouseEvent): void {
+      event.preventDefault();
+      this.closePopovers();
+      const maxLeft = Math.max(4, window.innerWidth - 540);
+      const maxTop = Math.max(4, window.innerHeight - 340);
+      this.copyMenu = {
+        left: Math.max(4, Math.min(event.clientX, maxLeft)),
+        top: Math.max(4, Math.min(event.clientY, maxTop)),
+        section: "root",
+        rowIndex: rowIndexOfTarget(event.target),
+      };
+    },
+
+    openCopyMenuFromButton(event: MouseEvent): void {
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+      this.closePopovers();
+      const maxLeft = Math.max(4, window.innerWidth - 540);
+      this.copyMenu = {
+        left: Math.max(4, Math.min(rect.left, maxLeft)),
+        top: Math.min(rect.bottom + 4, Math.max(4, window.innerHeight - 340)),
+        section: "root",
+        rowIndex: -1,
+      };
+    },
+
+    closeCopyMenu(): void {
+      this.copyMenu = null;
+    },
+
+    setCopySection(section: CopyMenuState["section"]): void {
+      if (this.copyMenu) {
+        this.copyMenu = { ...this.copyMenu, section };
+      }
+    },
+
+    toggleCompact(): void {
+      this.compact = !this.compact;
+      // The host persists the preference (workspace configuration) so the next
+      // result view opens with the same density; the webview applies the state
+      // immediately, the round trip only restores it later.
+      postMessage({ type: "setCompact", compact: this.compact });
+    },
+
+    runCopy(format: CopyFormat | "quick"): void {
+      const menu = this.copyMenu;
+      const columns: GridColumn[] = this.activeFields.map((field) => ({
+        name: field.name,
+        type: field.type,
+      }));
+      const rowIndex = menu && menu.rowIndex >= 0 ? menu.rowIndex : -1;
+      const useRow = format === "quick" || (menu !== null && menu.section === "selection");
+      const source =
+        useRow && rowIndex >= 0 && this.displayRows[rowIndex]
+          ? [this.displayRows[rowIndex]]
+          : this.displayRows;
+      const rows: GridCellValue[][] = source.map((record) =>
+        this.activeFields.map((field) => record[field.field] ?? null),
+      );
+      const text = copyPayload(
+        format === "quick" ? "plain" : format,
+        this.grid?.table ?? "",
+        columns,
+        rows,
+      );
+      if (text !== "") {
+        postMessage({ type: "copy", text });
+      }
+      this.closeCopyMenu();
     },
 
     renderHead(h: CreateElement): VNode | null {
       const query = init.query;
-      if (init.mode !== 'query' || !query) {
-        return null;
+      if (init.mode !== "query" || !query) return null;
+      const tags: VNode[] = [
+        h("span", { key: "conn", class: "dd-tag is-primary" }, query.connectionName),
+      ];
+      if (query.database) {
+        tags.push(h("span", { key: "db", class: "dd-tag" }, query.database));
       }
-      const parts: VNode[] = [];
-      const push = (key: string, text: string, kind?: 'db' | 'error'): void => {
-        if (parts.length > 0) {
-          parts.push(h('span', { key: `sep-${key}`, class: 'dd-head-sep' }, '·'));
-        }
-        const data = kind === 'db' ? { key, class: 'dd-head-db' } : kind === 'error' ? { key, class: 'dd-head-error' } : { key };
-        parts.push(h('span', data, text));
-      };
-      push('conn', query.connectionName, 'db');
-      push('stmts', `${query.statementCount} statement(s)`);
-      push('exec', `${query.executedCount} executed`);
-      push('time', `${(query.durationMs / 1000).toFixed(2)} s total`);
+      tags.push(
+        h("span", { key: "stmts", class: "dd-stat" }, `${query.statementCount} statement(s)`),
+        h("span", { key: "exec", class: "dd-stat" }, `${query.executedCount} executed`),
+        h("span", { key: "time", class: "dd-stat" }, `${(query.durationMs / 1000).toFixed(2)} s total`),
+      );
       if (query.hasError) {
-        push('err', 'one or more statements failed', 'error');
+        tags.push(h("span", { key: "err", class: "dd-tag is-error" }, "one or more statements failed"));
       }
-      const out: VNode[] = [h('div', { class: 'dd-head-row' }, parts)];
+      const out: VNode[] = [h("div", { class: "dd-head-row" }, tags)];
       if (query.notices.length > 0) {
-        out.push(h('ul', { class: 'dd-notices' }, query.notices.map((notice, index) => h('li', { key: String(index) }, notice))));
+        out.push(
+          h(
+            "ul",
+            { class: "dd-notices" },
+            query.notices.map((notice, index) =>
+              h("li", { key: String(index) }, notice),
+            ),
+          ),
+        );
       }
-      return h('div', { class: 'dd-head' }, out);
+      return h("div", { class: "dd-head" }, out);
     },
 
     renderTabs(h: CreateElement): VNode | null {
-      if (init.mode !== 'query' || init.grids.length <= 1) {
-        return null;
-      }
+      if (init.mode !== "query" || init.grids.length <= 1) return null;
       const tabs: VNode[] = init.grids.map((grid, index) => {
         const statusClass =
-          grid.status === 'error' ? 'is-error' : grid.status === 'mutation' ? 'is-mutation' : grid.status === 'skipped' ? 'is-skipped' : '';
+          grid.status === "error"
+            ? "is-error"
+            : grid.status === "mutation"
+              ? "is-mutation"
+              : grid.status === "skipped"
+                ? "is-skipped"
+                : "";
         const inner: VNode[] = [];
-        if (statusClass !== '') {
-          inner.push(h('span', { key: 'mark', class: ['dd-tab-mark', statusClass] }));
+        if (statusClass !== "") {
+          inner.push(
+            h("span", { key: "mark", class: ["dd-tab-mark", statusClass] }),
+          );
         }
-        inner.push(h('span', { key: 'label' }, grid.label));
+        inner.push(h("span", { key: "label" }, grid.label));
         return h(
-          'button',
+          "button",
           {
             key: grid.id,
-            class: ['dd-tab', this.active === index ? 'is-active' : ''],
+            class: ["dd-tab", this.active === index ? "is-active" : ""],
             attrs: {
-              role: 'tab',
-              'aria-selected': this.active === index ? 'true' : 'false',
+              role: "tab",
+              "aria-selected": this.active === index ? "true" : "false",
               title: grid.statementSql ?? grid.label,
             },
-            on: { click: () => { this.active = index; } },
+            on: {
+              click: () => {
+                this.active = index;
+              },
+            },
           },
           inner,
         );
       });
-      return h('nav', { class: 'dd-tabs', attrs: { role: 'tablist' } }, tabs);
+      return h("nav", { class: "dd-tabs", attrs: { role: "tablist" } }, tabs);
     },
 
     renderToolbar(h: CreateElement): VNode {
       const parts: VNode[] = [];
-      if (this.engineMark !== '') {
+      if (this.engineMark !== "") {
         parts.push(
-          h('span', {
-            class: 'dd-engine',
-            attrs: { title: init.engine ?? '' },
+          h("span", {
+            class: "dd-engine",
+            attrs: { title: init.engine ?? "" },
             domProps: { innerHTML: this.engineMark },
           }),
         );
       }
       parts.push(
-        h('div', { class: 'dd-search' }, [
-          iconVNode(h, SEARCH_SVG, 'dd-search-icon'),
-          h('input', {
-            attrs: { type: 'text', placeholder: 'Input To Search Data', 'aria-label': 'Search data' },
+        h("div", { class: "dd-search" }, [
+          iconVNode(h, SEARCH_SVG, "dd-search-icon"),
+          h("input", {
+            attrs: {
+              type: "text",
+              placeholder: "Input To Search Data",
+              "aria-label": "Search data",
+            },
             domProps: { value: this.search },
             on: {
-              input: (event: Event) => this.onSearchInput((event.target as HTMLInputElement).value),
+              input: (event: Event) =>
+                this.onSearchInput((event.target as HTMLInputElement).value),
               keyup: (event: KeyboardEvent) => this.onSearchKeyup(event),
             },
           }),
-          this.search !== ''
+          this.search !== ""
             ? h(
-                'button',
+                "button",
                 {
-                  class: 'dd-search-clear',
-                  attrs: { type: 'button', title: 'Clear search', 'aria-label': 'Clear search' },
+                  class: "dd-search-clear",
+                  attrs: {
+                    type: "button",
+                    title: "Clear search",
+                    "aria-label": "Clear search",
+                  },
                   on: { click: () => this.clearSearch() },
                 },
                 [iconVNode(h, iconClose())],
@@ -591,370 +864,539 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
             : null,
         ]),
       );
-      if (!isTableMode) {
-        parts.push(
-          h(
-            'button',
-            {
-              class: ['dd-btn', this.columnsOpen ? 'is-active' : ''],
-              attrs: { type: 'button', title: 'Select columns to show', 'aria-label': 'Select columns to show' },
-              on: { click: () => this.toggleColumns() },
-            },
-            [iconVNode(h, COLUMNS_SVG)],
-          ),
-        );
-      }
+
+      parts.push(h("span", { class: "dd-sep" }));
+
       parts.push(
         h(
-          'button',
+          "button",
           {
-            class: ['dd-btn', this.exportOpen ? 'is-active' : ''],
-            attrs: { type: 'button', title: 'Export', 'aria-label': 'Export' },
+            class: ["dd-btn", this.columnsOpen ? "is-active" : ""],
+            attrs: { type: "button", title: "Select Columns" },
+            on: { click: () => this.toggleColumns() },
+          },
+          [iconVNode(h, COLUMNS_SVG)],
+        ),
+      );
+
+      parts.push(
+        h(
+          "button",
+          {
+            class: ["dd-btn", this.compact ? "is-active" : ""],
+            attrs: { type: "button", title: "Compact rows" },
+            on: { click: () => this.toggleCompact() },
+          },
+          [iconVNode(h, DENSITY_SVG)],
+        ),
+      );
+
+      parts.push(
+        h(
+          "button",
+          {
+            class: ["dd-btn", this.copyMenu ? "is-active" : ""],
+            attrs: { type: "button", title: "Copy As" },
+            on: { click: (event: MouseEvent) => this.openCopyMenuFromButton(event) },
+          },
+          [iconVNode(h, COPY_SVG)],
+        ),
+      );
+
+      parts.push(
+        h(
+          "button",
+          {
+            class: ["dd-btn", this.exportOpen ? "is-active" : ""],
+            attrs: { type: "button", title: "Export Data" },
             on: { click: () => this.toggleExport() },
           },
           [iconVNode(h, DOWNLOAD_SVG)],
         ),
       );
+
+      parts.push(h("span", { class: "dd-sep" }));
+
       if (this.showReveal) {
         parts.push(
           h(
-            'button',
+            "button",
             {
-              class: 'dd-btn',
-              attrs: { type: 'button', title: 'Open in SQL file', 'aria-label': 'Open in SQL file' },
+              class: "dd-btn",
+              attrs: { type: "button", title: "Reveal Query" },
               on: { click: () => this.revealSql() },
             },
             [iconVNode(h, iconReveal())],
           ),
         );
       }
+
       if (isTableMode) {
         parts.push(
           h(
-            'button',
+            "button",
             {
-              class: 'dd-btn',
-              attrs: { type: 'button', title: 'Refresh', 'aria-label': 'Refresh' },
+              class: "dd-btn",
+              attrs: { type: "button", title: "Refresh Data" },
               on: { click: () => this.refresh() },
             },
             [iconVNode(h, iconRefresh())],
           ),
         );
       }
-      parts.push(h('span', { class: 'dd-spacer' }));
+
+      parts.push(h("div", { class: "dd-spacer" }));
+
       if (init.cost) {
-        parts.push(h('span', { class: 'dd-cost' }, init.cost));
+        parts.push(h("span", { class: "dd-cost" }, init.cost));
       }
+
+      const pagerBtns: VNode[] = [];
       if (isTableMode) {
-        parts.push(
-          h('div', { class: 'dd-pager' }, [
-            h(
-              'button',
-              {
-                class: 'dd-btn',
-                attrs: { type: 'button', title: 'Previous page', 'aria-label': 'Previous page' },
-                on: { click: () => this.page(-1) },
+        pagerBtns.push(
+          h(
+            "button",
+            {
+              class: "dd-btn",
+              attrs: {
+                type: "button",
+                title: "Previous Page",
+                disabled: this.pageIndex === 0,
               },
-              [iconVNode(h, iconChevron('left'))],
-            ),
-            h('span', {}, this.pagerLabel),
-            h(
-              'button',
-              {
-                class: 'dd-btn',
-                attrs: { type: 'button', title: 'Next page', 'aria-label': 'Next page' },
-                on: { click: () => this.page(1) },
-              },
-              [iconVNode(h, iconChevron('right'))],
-            ),
-          ]),
+              on: { click: () => this.page(-1) },
+            },
+            [iconVNode(h, iconChevron("left"))],
+          ),
         );
       }
-      return h('div', { class: 'dd-toolbar' }, parts);
+
+      pagerBtns.push(h("span", {}, this.pagerLabel));
+
+      if (isTableMode) {
+        const isLastPage =
+          this.pageIndex >= Math.max(0, (init.pageCount ?? 1) - 1);
+        pagerBtns.push(
+          h(
+            "button",
+            {
+              class: "dd-btn",
+              attrs: {
+                type: "button",
+                title: "Next Page",
+                disabled: isLastPage,
+              },
+              on: { click: () => this.page(1) },
+            },
+            [iconVNode(h, iconChevron("right"))],
+          ),
+        );
+      }
+
+      parts.push(h("div", { class: "dd-pager" }, pagerBtns));
+
+      return h("div", { class: "dd-toolbar" }, parts);
     },
 
     renderBanner(h: CreateElement): VNode | null {
       const banner = this.banner;
-      if (!banner) {
-        return null;
-      }
+      if (!banner) return null;
       return h(
-        'div',
-        { class: ['dd-banner', banner.kind === 'error' ? 'dd-banner-error' : 'dd-banner-info'] },
+        "div",
+        {
+          class: [
+            "dd-banner",
+            banner.kind === "error" ? "dd-banner-error" : "dd-banner-info",
+          ],
+        },
         banner.text,
       );
     },
 
-    renderGridHost(h: CreateElement): VNode {
-      const grid = this.grid;
-      const content: VNode = grid
-        ? h('transition', { props: { name: 'dd-fade', mode: 'out-in' } }, [
-            h('div', { key: grid.id }, [this.renderGrid(h)]),
-          ])
-        : h('div', { key: 'empty', class: 'dd-empty' }, 'No results.');
-      return h('div', { class: 'dd-grid-host', ref: 'gridHost' }, [content]);
-    },
-
-    renderGrid(h: CreateElement): VNode {
-      const rows = this.allRows;
-      const columns: VNode[] = [
-        h('ux-table-column', { props: { type: 'index', width: 40, align: 'center', headerAlign: 'center' } }),
-      ];
-      for (const field of this.activeFields) {
-        const header = this.renderColumnHeader(h, field);
-        columns.push(
-          h('ux-table-column', {
-            props: {
-              field: field.field,
-              title: field.name,
-              width: computeWidth(field, rows),
-              sortable: true,
-              resizable: true,
-              align: 'center',
-              headerAlign: 'center',
-            },
-            scopedSlots: {
-              header: () => [header],
-              default: (scope: unknown) => [this.cellVNode(h, scope)],
-            },
-          }),
-        );
-      }
-      return h(
-        'ux-grid',
-        {
-          props: {
-            data: this.displayRows,
-            height: this.gridHostHeight,
-            stripe: true,
-            size: 'small',
-            cellStyle: { height: '35px' },
-          },
-          on: { 'sort-change': (event: unknown) => this.onSortChange(event) },
-        },
-        columns,
-      );
-    },
-
     renderColumnHeader(h: CreateElement, field: Field): VNode {
-      const title = field.type ? `${field.name} (${field.type})` : field.name;
-      const parts: VNode[] = [h('span', { class: 'dd-col-name' }, field.name)];
-      if (field.type) {
-        parts.push(h('span', { class: 'dd-col-type' }, field.type));
-      }
+      const hasFilter = this.filters.some((f) => f.column === field.name);
+      const nameRow: VNode[] = [h("span", { class: "dd-col-name" }, field.name)];
       if (isTableMode) {
-        parts.push(
+        nameRow.push(
           h(
-            'button',
+            "button",
             {
-              class: ['dd-btn', 'dd-col-filter'],
-              attrs: { type: 'button', title: `Filter ${field.name}`, 'aria-label': `Filter ${field.name}` },
-              on: { click: (event: MouseEvent) => this.openFilter(field.name, event) },
+              class: ["dd-btn", "dd-col-filter", hasFilter ? "is-active" : ""],
+              attrs: { type: "button", title: `Filter ${field.name}` },
+              on: {
+                click: (e: MouseEvent) => this.openFilter(field.name, e),
+              },
             },
             [iconVNode(h, iconFunnel())],
           ),
         );
       }
-      return h('div', { class: 'dd-col-header', attrs: { title } }, parts);
+      // Database Client Row_Header: name first, type on a second muted line.
+      return h("div", { class: "dd-col-header" }, [
+        h("div", { class: "dd-col-name-row" }, nameRow),
+        field.type ? h("div", { class: "dd-col-type" }, field.type) : null,
+      ]);
+    },
+
+    renderGrid(h: CreateElement): VNode {
+      const columns = this.activeFields.map((field) =>
+        h("ux-table-column", {
+          props: {
+            field: field.field,
+            title: field.name,
+            sortable: "custom",
+            minWidth: computeWidth(field, this.displayRows),
+          },
+          scopedSlots: {
+            header: () => this.renderColumnHeader(h, field),
+            default: (scope: unknown) => this.cellVNode(h, scope),
+          },
+        }),
+      );
+
+      const indexCol = h("ux-table-column", {
+        props: {
+          type: "index",
+          width: 50,
+          align: "center",
+          classNames: "col--index",
+        },
+      });
+
+      return h(
+        "ux-grid",
+        {
+          ref: "grid",
+          props: {
+            data: this.displayRows,
+            height: this.gridHostHeight,
+            size: "mini",
+            border: true,
+            stripe: true,
+            showOverflow: true,
+            showHeaderOverflow: true,
+          },
+          on: {
+            "sort-change": (evt: unknown) => this.onSortChange(evt),
+          },
+        },
+        [indexCol, ...columns],
+      );
+    },    renderGridHost(h: CreateElement): VNode {
+      // The density class lives on this real element (not on the ux-grid
+      // component, whose class lands on an inner wrapper) so the CSS overrides
+      // can scope through it, and the custom property inherits down.
+      return h(
+        "div",
+        {
+          ref: "gridHost",
+          class: ["dd-grid-host", this.compact ? "dd-grid-host--compact" : ""],
+          on: {
+            contextmenu: (event: MouseEvent) => this.openCopyMenu(event),
+          },
+        },
+        this.displayRows.length > 0
+          ? [this.renderGrid(h)]
+          : [h("div", { class: "dd-empty" }, "No Data Found")],
+      );
     },
 
     renderColumnsPopover(h: CreateElement): VNode {
-      const items: VNode[] = this.fields.map((field) => {
-        const checked = !this.hidden.includes(field.name);
-        return h('label', { key: field.field }, [
-          h('input', {
-            attrs: { type: 'checkbox' },
-            domProps: { checked },
-            on: { change: (event: Event) => this.toggleColumn(field.name, (event.target as HTMLInputElement).checked) },
-          }),
-          h('span', {}, field.name),
-        ]);
-      });
-      return h('div', { class: 'dd-popover', style: { right: '10px', top: '36px' } }, [
-        h('p', { class: 'dd-popover-title' }, 'Select columns to show'),
-        h('div', { class: 'dd-col-list' }, items),
-      ]);
+      return h(
+        "div",
+        { class: "dd-popover", style: { top: "36px", left: "190px" } },
+        [
+          h("div", { class: "dd-popover-title" }, "Columns"),
+          h(
+            "div",
+            { class: "dd-col-list" },
+            this.fields.map((f) =>
+              h("label", { key: f.field }, [
+                h("input", {
+                  attrs: { type: "checkbox" },
+                  domProps: { checked: !this.hidden.includes(f.name) },
+                  on: {
+                    change: (e: Event) =>
+                      this.toggleColumn(
+                        f.name,
+                        (e.target as HTMLInputElement).checked,
+                      ),
+                  },
+                }),
+                h("span", {}, f.name),
+              ]),
+            ),
+          ),
+        ],
+      );
     },
 
     renderExportPopover(h: CreateElement): VNode {
-      const chips: VNode[] = FORMATS.map((format) => {
-        const disabled = format === 'sql' && !this.canExportSql;
-        return h(
-          'button',
-          {
-            key: format,
-            class: ['dd-chip', this.exportFormat === format ? 'is-selected' : ''],
-            attrs: { type: 'button', disabled },
-            on: { click: () => this.chooseFormat(format) },
-          },
-          format.toUpperCase(),
-        );
-      });
-      return h('div', { class: 'dd-popover', style: { right: '10px', top: '36px' } }, [
-        h('p', { class: 'dd-popover-title' }, 'Export'),
-        h('div', { class: 'dd-chips' }, chips),
-        h('div', { class: 'dd-popover-actions' }, [
-          h('button', { class: 'dd-btn-primary', attrs: { type: 'button' }, on: { click: () => this.doExport('editor') } }, 'Export to Editor'),
-          h('button', { class: 'dd-btn-secondary', attrs: { type: 'button' }, on: { click: () => this.doExport('file') } }, 'Save File'),
-        ]),
-      ]);
+      return h(
+        "div",
+        { class: "dd-popover", style: { top: "36px", left: "220px" } },
+        [
+          h("div", { class: "dd-popover-title" }, "Export Format"),
+          h(
+            "div",
+            { class: "dd-chips" },
+            FORMATS.map((fmt) =>
+              h(
+                "button",
+                {
+                  key: fmt,
+                  class: [
+                    "dd-chip",
+                    this.exportFormat === fmt ? "is-selected" : "",
+                  ],
+                  attrs: {
+                    type: "button",
+                    disabled: fmt === "sql" && !this.canExportSql,
+                  },
+                  on: { click: () => this.chooseFormat(fmt) },
+                },
+                fmt.toUpperCase(),
+              ),
+            ),
+          ),
+          h("div", { class: "dd-popover-actions" }, [
+            h(
+              "button",
+              {
+                class: "dd-btn-secondary",
+                attrs: { type: "button" },
+                on: { click: () => this.doExport("editor") },
+              },
+              "To Editor",
+            ),
+            h(
+              "button",
+              {
+                class: "dd-btn-primary",
+                attrs: { type: "button" },
+                on: { click: () => this.doExport("file") },
+              },
+              "To File",
+            ),
+          ]),
+        ],
+      );
     },
 
     renderFilterPopover(h: CreateElement): VNode {
       const draft = this.filterDraft;
-      if (!draft) {
-        return h('div', {}, []);
-      }
-      const rect = this.popoverRect ?? { left: 20, top: 60 };
-      const noValue = draft.operator === 'IS NULL' || draft.operator === 'IS NOT NULL';
-      const valueField: VNode = noValue
-        ? h('p', {}, 'No value needed.')
-        : h('input', {
-            attrs: { type: 'text', placeholder: 'Value', 'aria-label': 'Value' },
-            domProps: { value: draft.value },
-            on: {
-              input: (event: Event) => this.setFilterValue((event.target as HTMLInputElement).value),
-              keyup: (event: KeyboardEvent) => {
-                if (event.key === 'Enter' || event.key === 'NumpadEnter') {
-                  this.applyFilter();
-                }
+      const rect = this.popoverRect;
+      if (!draft || !rect) return h("div");
+
+      const isNullOp =
+        draft.operator === "IS NULL" || draft.operator === "IS NOT NULL";
+
+      return h(
+        "div",
+        {
+          class: "dd-popover",
+          style: { top: `${rect.top}px`, left: `${rect.left}px` },
+        },
+        [
+          h("div", { class: "dd-popover-title" }, `Filter: ${draft.column}`),
+          h("div", { class: "dd-filter-form" }, [
+            h(
+              "select",
+              {
+                domProps: { value: draft.operator },
+                on: {
+                  change: (e: Event) =>
+                    this.setFilterOperator(
+                      (e.target as HTMLSelectElement).value,
+                    ),
+                },
               },
-            },
-          });
-      return h('div', { class: 'dd-popover', style: { left: `${rect.left}px`, top: `${rect.top}px` } }, [
-        h('p', { class: 'dd-popover-title' }, `Filter ${draft.column}`),
-        h('div', { class: 'dd-filter-form' }, [
-          h(
-            'select',
-            {
-              attrs: { 'aria-label': 'Operator' },
-              domProps: { value: draft.operator },
-              on: { change: (event: Event) => this.setFilterOperator((event.target as HTMLSelectElement).value) },
-            },
-            OPERATORS.map((op) => h('option', { key: op, domProps: { value: op } }, op)),
-          ),
-          valueField,
-          h('div', { class: 'dd-popover-actions' }, [
-            h('button', { class: 'dd-btn-secondary', attrs: { type: 'button' }, on: { click: () => this.clearFilter() } }, 'Clear'),
-            h('button', { class: 'dd-btn-primary', attrs: { type: 'button' }, on: { click: () => this.applyFilter() } }, 'Apply'),
+              OPERATORS.map((op) => h("option", { attrs: { value: op } }, op)),
+            ),
+            !isNullOp
+              ? h("input", {
+                  attrs: { type: "text", placeholder: "Filter value..." },
+                  domProps: { value: draft.value },
+                  on: {
+                    input: (e: Event) =>
+                      this.setFilterValue((e.target as HTMLInputElement).value),
+                  },
+                })
+              : null,
           ]),
-        ]),
-      ]);
+          h("div", { class: "dd-popover-actions" }, [
+            h(
+              "button",
+              {
+                class: "dd-btn-secondary",
+                attrs: { type: "button" },
+                on: { click: () => this.clearFilter() },
+              },
+              "Clear",
+            ),
+            h(
+              "button",
+              {
+                class: "dd-btn-primary",
+                attrs: { type: "button" },
+                on: { click: () => this.applyFilter() },
+              },
+              "Apply",
+            ),
+          ]),
+        ],
+      );
     },
 
-    renderPopovers(h: CreateElement): VNode {
-      const parts: VNode[] = [];
-      if (this.columnsOpen || this.exportOpen || this.filterDraft !== undefined) {
-        parts.push(
-          h('div', { class: 'dd-popover-backdrop', on: { click: () => this.closePopovers() } }),
+    renderPopovers(h: CreateElement): VNode | null {
+      const hasPopover =
+        this.columnsOpen || this.exportOpen || Boolean(this.filterDraft);
+      if (!hasPopover) return null;
+
+      const children: VNode[] = [
+        h("div", {
+          class: "dd-popover-backdrop",
+          on: { click: () => this.closePopovers() },
+        }),
+      ];
+
+      if (this.columnsOpen) children.push(this.renderColumnsPopover(h));
+      if (this.exportOpen) children.push(this.renderExportPopover(h));
+      if (this.filterDraft) children.push(this.renderFilterPopover(h));
+
+      return h("div", children);
+    },
+
+    renderCopyMenu(h: CreateElement): VNode | null {
+      const menu = this.copyMenu;
+      if (!menu) return null;
+
+      const item = (
+        key: string,
+        label: string,
+        options: {
+          active?: boolean;
+          sub?: boolean;
+          onEnter?: () => void;
+          onClick: () => void;
+        },
+      ): VNode => {
+        const children: VNode[] = [h("span", {}, label)];
+        if (options.sub) {
+          children.push(iconVNode(h, iconChevron("right"), "dd-menu-caret"));
+        }
+        return h(
+          "button",
+          {
+            key,
+            class: ["dd-menu-item", options.active ? "is-active" : ""],
+            attrs: { type: "button" },
+            on: {
+              mouseenter: options.onEnter ?? ((): void => undefined),
+              click: options.onClick,
+            },
+          },
+          children,
+        );
+      };
+
+      const flyouts: VNode[] = [];
+      if (menu.section !== "root") {
+        flyouts.push(
+          h(
+            "div",
+            {
+              key: "sections",
+              class: "dd-menu",
+              style: { left: `${menu.left + 178}px`, top: `${menu.top}px` },
+            },
+            [
+              item("selection", "Selection", {
+                active: menu.section === "selection",
+                sub: true,
+                onEnter: () => this.setCopySection("selection"),
+                onClick: () => this.setCopySection("selection"),
+              }),
+              item("all", "All", {
+                active: menu.section === "all",
+                sub: true,
+                onEnter: () => this.setCopySection("all"),
+                onClick: () => this.setCopySection("all"),
+              }),
+            ],
+          ),
         );
       }
-      if (this.columnsOpen) {
-        parts.push(this.renderColumnsPopover(h));
+      if (menu.section === "selection" || menu.section === "all") {
+        const formats = menu.section === "selection" ? SELECTION_FORMATS : ALL_FORMATS;
+        flyouts.push(
+          h(
+            "div",
+            {
+              key: "formats",
+              class: "dd-menu dd-menu-formats",
+              style: { left: `${menu.left + 330}px`, top: `${menu.top}px` },
+            },
+            formats.map((format) =>
+              item(format, copyFormatLabel(format), {
+                onEnter: () => this.setCopySection(menu.section),
+                onClick: () => this.runCopy(format),
+              }),
+            ),
+          ),
+        );
       }
-      if (this.exportOpen) {
-        parts.push(this.renderExportPopover(h));
-      }
-      if (this.filterDraft) {
-        parts.push(this.renderFilterPopover(h));
-      }
-      return h('div', {}, parts);
-    },
-  },
 
-  computed: {
-    grid(): GridViewGridInit | null {
-      return init.grids[this.active] ?? null;
-    },
-    fields(): Field[] {
-      return this.grid ? fieldsFor(this.grid.columns) : [];
-    },
-    allRows(): Record<string, GridCellValue>[] {
-      const grid = this.grid;
-      return grid ? rowsFor(grid, this.fields) : [];
-    },
-    activeFields(): Field[] {
-      return this.fields.filter((field) => !this.hidden.includes(field.name));
-    },
-    displayRows(): Record<string, GridCellValue>[] {
-      if (!isTableMode) {
-        const term = this.search.trim().toLowerCase();
-        let rows = this.allRows;
-        if (term !== '') {
-          rows = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(term));
-        }
-        const sort = this.clientSort;
-        if (sort) {
-          rows = rows.slice().sort((a, b) => {
-            const cmp = compareCells(a[sort.column], b[sort.column]);
-            return sort.direction === 'asc' ? cmp : -cmp;
-          });
-        }
-        return rows;
-      }
-      return this.allRows;
-    },
-    engineMark(): string {
-      return init.engine ? getEngineIcon(init.engine as EngineId).svg : '';
-    },
-    banner(): { kind: 'error' | 'info'; text: string } | null {
-      const grid = this.grid;
-      if (!grid) {
-        return null;
-      }
-      if (grid.status === 'error') {
-        return { kind: 'error', text: grid.error || 'Statement failed.' };
-      }
-      if (grid.status === 'skipped') {
-        return { kind: 'info', text: 'Skipped: an earlier statement in the batch failed.' };
-      }
-      if (grid.status === 'mutation') {
-        return {
-          kind: 'info',
-          text: grid.rowsAffected != null ? `${grid.rowsAffected} row(s) affected.` : 'Statement executed.',
-        };
-      }
-      if (init.mode === 'query' && grid.rows.length === 0) {
-        return { kind: 'info', text: 'No data.' };
-      }
-      if (grid.truncated) {
-        return { kind: 'info', text: `Showing the first ${grid.rows.length} rows.` };
-      }
-      return null;
-    },
-    canExportSql(): boolean {
-      return (this.grid?.table ?? '').length > 0;
-    },
-    showReveal(): boolean {
-      return init.mode === 'query' && this.grid?.reveal !== undefined && this.grid.reveal !== null;
-    },
-    pagerLabel(): string {
-      const pageCount = Math.max(1, init.pageCount ?? 1);
-      const label = `Page ${this.pageIndex + 1} of ${pageCount}`;
-      return init.totalRows != null ? `${label} · ${init.totalRows} rows` : label;
+      const root = h(
+        "div",
+        {
+          key: "root",
+          class: "dd-menu",
+          style: { left: `${menu.left}px`, top: `${menu.top}px` },
+        },
+        [
+          item("copy", "Copy", { onClick: () => this.runCopy("quick") }),
+          h("div", { key: "sep", class: "dd-menu-sep" }),
+          item("copyas", "Copy As", {
+            active: menu.section !== "root",
+            sub: true,
+            onEnter: () => this.setCopySection("copyAs"),
+            onClick: () =>
+              this.setCopySection(menu.section === "root" ? "copyAs" : "root"),
+          }),
+        ],
+      );
+
+      const backdrop = h("div", {
+        key: "backdrop",
+        class: "dd-menu-backdrop",
+        on: {
+          mousedown: () => this.closeCopyMenu(),
+          contextmenu: (event: MouseEvent) => {
+            event.preventDefault();
+            this.closeCopyMenu();
+          },
+        },
+      });
+
+      return h("div", { class: "dd-menu-layer" }, [backdrop, root, ...flyouts]);
     },
   },
 
   render(h: CreateElement): VNode {
-    const parts: VNode[] = [];
-    const head = this.renderHead(h);
-    if (head) {
-      parts.push(head);
-    }
-    const tabs = this.renderTabs(h);
-    if (tabs) {
-      parts.push(tabs);
-    }
-    parts.push(this.renderToolbar(h));
-    const banner = this.renderBanner(h);
-    if (banner) {
-      parts.push(banner);
-    }
-    parts.push(this.renderGridHost(h));
-    parts.push(this.renderPopovers(h));
-    return h('div', { class: 'dd-root' }, parts);
+    return h("div", { class: "dd-root" }, [
+      this.renderHead(h),
+      this.renderTabs(h),
+      this.renderToolbar(h),
+      this.renderBanner(h),
+      this.renderGridHost(h),
+      this.renderPopovers(h),
+      this.renderCopyMenu(h),
+    ]);
   },
 });
 
-Vue.use(UmyTable);
+export default ResultApp;
+
+// `el` in a Vue.extend options object is ignored; the instance must be created
+// (and therefore mounted) explicitly, exactly like the previous implementation.
 new ResultApp();

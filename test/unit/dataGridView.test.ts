@@ -87,6 +87,16 @@ describe('renderDataGridPage', () => {
     assert.ok(csp.includes(`img-src ${assets.cspSource} data:`));
   });
 
+  it('forwards the compact density flag into the boot island', () => {
+    const compactPage = renderDataGridPage(
+      assets,
+      { mode: 'table', grids: [grid], activeIndex: 0, compact: true },
+      'DataDock - users',
+    );
+    assert.ok(compactPage.includes('"compact":true'));
+    assert.ok(!page.includes('"compact":true'));
+  });
+
   it('declares the island before the bundle so data is readable at boot', () => {
     const islandAt = page.indexOf('globalThis.__DATADOCK_RESULT__=');
     const bundleAt = page.indexOf(assets.jsUri);

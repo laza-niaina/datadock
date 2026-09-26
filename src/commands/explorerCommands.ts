@@ -1,12 +1,19 @@
 /**
- * Explorer-local commands: refresh, cache control, copy name.
+ * Explorer-local commands: refresh, cache control, copy name, Quick Open.
  *
- * These operate on the node that was right-clicked, which is why they all take
- * an `unknown` first argument and narrow it themselves.
+ * Context commands operate on the node that was right-clicked, which is why
+ * they all take an `unknown` first argument and narrow it themselves.
  */
 
 import * as vscode from 'vscode';
-import { ExplorerNode } from '../explorer/nodes';
+import { ExplorerNode, FolderNode, RelationNode } from '../explorer/nodes';
+import {
+  type ExplorerQuickPickItem,
+  explorerObjectItems,
+  qualifiedName,
+  toQuickPickItem,
+} from '../explorer/explorerSearch';
+import { TableViewerPanel } from '../ui/tableViewerPanel';
 import type { CommandServices, Register } from './types';
 
 /** Reads the display label of a tree item, whatever shape VS Code gave it. */
@@ -53,5 +60,77 @@ export function registerExplorerCommands(register: Register, services: CommandSe
     if (label) {
       await vscode.env.clipboard.writeText(label);
     }
+  });
+
+  /** Qualifies the label with its database (and schema) when known. */
+  function qualifiedLabel(node: ExplorerNode): string {
+    if (node instanceof RelationNode) {
+      return qualifiedName(node.ref);
+    }
+    if (node instanceof FolderNode) {
+      return qualifiedName(node.ref);
+    }
+    return labelOf(node) ?? '';
+  }
+
+  register('dbclient.node.copyQualifiedName', async (node?: unknown) => {
+    if (!(node instanceof ExplorerNode)) {
+      return;
+    }
+    const name = qualifiedLabel(node);
+    if (name !== '') {
+      await vscode.env.clipboard.writeText(name);
+    }
+  });
+
+  register('dbclient.explorer.quickOpen', async () => {
+    const profiles = await services.store.list();
+    if (profiles.length === 0) {
+      void vscode.window.showInformationMessage('Add a connection before searching for tables.');
+      return;
+    }
+    const connected = profiles.filter((profile) => services.manager.getDriver(profile.id));
+    if (connected.length === 0) {
+      void vscode.window.showInformationMessage('Connect a profile to search its tables.');
+      return;
+    }
+
+    const tablesOf = async (ref: { connectionId: string; database: string }) => {
+      const driver = services.manager.requireDriver(ref.connectionId);
+      return driver.listTables(ref);
+    };
+    void vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Window, title: 'DataDock: indexing database objects…' },
+      async () => {
+        const items = await explorerObjectItems(connected, tablesOf);
+        if (items.length === 0) {
+          void vscode.window.showInformationMessage('No tables or views found on the connected profiles.');
+          return;
+        }
+        const pick = vscode.window.createQuickPick<ExplorerQuickPickItem>();
+        pick.placeholder = 'Go to table or view, across every connected database (fuzzy).';
+        pick.matchOnDescription = true;
+        pick.matchOnDetail = true;
+        pick.items = items.slice(0, 200).map((item) => toQuickPickItem(item));
+        pick.activeItems = pick.items.slice(0, 1);
+        const selected = await new Promise<ExplorerQuickPickItem | undefined>((resolve) => {
+          pick.onDidAccept(() => resolve(pick.selectedItems[0]));
+          pick.onDidHide(() => resolve(undefined));
+          pick.show();
+        });
+        if (!selected) {
+          return;
+        }
+        const chosen = selected.item;
+        const driver = services.manager.getDriver(chosen.connectionId);
+        TableViewerPanel.show({
+          manager: services.manager,
+          logger: services.logger,
+          ref: { connectionId: chosen.connectionId, database: chosen.database, schema: chosen.schema, table: chosen.table, kind: chosen.kind },
+          engine: driver?.engine,
+          title: `${chosen.database}.${chosen.table}`,
+        });
+      },
+    );
   });
 }

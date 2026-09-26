@@ -77,6 +77,8 @@ export interface DataGridViewOptions {
   readonly engine?: EngineId;
   /** Query-mode batch summary rendered in the page head. */
   readonly query?: QueryBatchMeta;
+  /** Persisted density preference: `true` renders the compact row set. */
+  readonly compact?: boolean;
 }
 
 /** URLs consumed by the page shell, resolved by resultHost.resultViewAssets. */

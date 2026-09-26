@@ -21,6 +21,7 @@ import {
   type DataGridViewOptions,
   type GridViewGrid,
 } from './dataGrid/dataGridView';
+import { compactGridSetting, writeCompactGridSetting } from './resultGridSettings';
 import { panelIconUri, resultViewAssets, resultViewWebviewOptions } from './resultView/resultHost';
 
 export interface QueryStatementDisplay {
@@ -61,7 +62,9 @@ export interface QueryDisplayOptions {
 
 type ResultMessage =
   | { type: 'reveal'; start?: unknown; end?: unknown }
-  | { type: 'export'; format?: unknown; target?: unknown; gridId?: unknown };
+  | { type: 'export'; format?: unknown; target?: unknown; gridId?: unknown }
+  | { type: 'copy'; text?: unknown }
+  | { type: 'setCompact'; compact?: unknown };
 
 function gridFromResultSet(
   statement: QueryStatementDisplay,
@@ -124,6 +127,7 @@ function renderQueryResultPage(panel: vscode.WebviewPanel, options: QueryDisplay
     activeIndex: firstActive,
     engine: options.engine,
     cost: `Cost: ${Math.round(options.durationMs)}ms`,
+    compact: compactGridSetting(),
     query: {
       connectionName: options.connectionName,
       database: options.database,
@@ -184,6 +188,23 @@ export class QueryResultPanel {
       const start = typeof value.start === 'number' ? value.start : 0;
       const end = typeof value.end === 'number' ? value.end : start;
       this.reveal(Math.max(0, start), Math.max(start, end));
+      return;
+    }
+    if (value.type === 'setCompact') {
+      // Persist the density toggle so every future result view opens the same
+      // way; the webview already applied the state locally.
+      if (typeof value.compact === 'boolean') {
+        void writeCompactGridSetting(value.compact);
+      }
+      return;
+    }
+    if (value.type === 'copy') {
+      // Copy As payloads are rendered in the webview from displayed cells and
+      // never contain more than what the grid already shows.
+      const text = typeof value.text === 'string' ? value.text : '';
+      if (text !== '') {
+        void vscode.env.clipboard.writeText(text);
+      }
       return;
     }
     if (value.type === 'export') {

@@ -31,6 +31,7 @@ import { getEngineIcon } from './icons';
 type InboundMessage =
   | { type: 'ready' }
   | { type: 'save'; draft: FormDraft }
+  | { type: 'saveAndConnect'; draft: FormDraft }
   | { type: 'test'; draft: FormDraft }
   | { type: 'cancel' }
   | { type: 'pickFile'; target: string };
@@ -139,7 +140,10 @@ export class ConnectionFormPanel {
           await this.pickFile(message.target);
           return;
         case 'save':
-          await this.save(message.draft);
+          await this.save(message.draft, false);
+          return;
+        case 'saveAndConnect':
+          await this.save(message.draft, true);
           return;
         case 'test':
           await this.testConnection(message.draft);
@@ -216,11 +220,11 @@ export class ConnectionFormPanel {
 
   // -- actions -------------------------------------------------------------
 
-  private async save(draft: FormDraft): Promise<void> {
+  private async save(draft: FormDraft, connect: boolean): Promise<void> {
     const profile = profileFromDraft(draft, this.baseProfile);
     const factory = this.options.registry.get(profile.engine);
 
-    await this.post({ type: 'busy', busy: true, label: 'Saving…' });
+    await this.post({ type: 'busy', busy: true, label: connect ? 'Saving and connecting...' : 'Saving...' });
     try {
       const saved = await this.options.store.save(profile, factory);
       // Secrets are written only after the profile is safely persisted.
@@ -233,9 +237,31 @@ export class ConnectionFormPanel {
 
       this.panel.title = `Edit Connection - ${saved.name}`;
       this.options.logger.info(`Connection '${saved.name}' saved from the connection form.`, { id: saved.id });
-      await this.post({ type: 'testResult', ok: true, message: `Saved '${saved.name}'.` });
       // The stored secrets may now exist, so the hints must be refreshed.
       await this.sendInit();
+
+      if (!connect) {
+        await this.post({ type: 'testResult', ok: true, message: `Saved '${saved.name}'.` });
+        return;
+      }
+
+      // The reference clients' primary action saves and connects in one step.
+      await this.post({ type: 'busy', busy: true, label: `Connecting to ${saved.name}...` });
+      try {
+        const config = await this.options.store.readConfig(saved.id);
+        if (!config) {
+          throw new DbError('CONFIG_ERROR', `Connection '${saved.name}' no longer exists.`);
+        }
+        await this.options.manager.connect(config);
+        await this.post({ type: 'testResult', ok: true, message: `Saved and connected to '${saved.name}'.` });
+      } catch (error) {
+        const connectError = DbError.from(error);
+        await this.post({
+          type: 'testResult',
+          ok: false,
+          message: `Saved '${saved.name}', but the connection failed: ${connectError.message}`,
+        });
+      }
     } catch (error) {
       const dbError = DbError.from(error, 'CONFIG_ERROR');
       await this.post({ type: 'error', message: dbError.message });
