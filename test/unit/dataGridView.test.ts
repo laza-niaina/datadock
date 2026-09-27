@@ -151,8 +151,30 @@ describe('resultApp.css invariants', () => {
     assert.ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(stripped));
   });
 
-  it('keeps the tab fade transition pure CSS (no host-side JS timers)', () => {
-    assert.match(css, /\.dd-fade/);
-    assert.match(css, /150ms/);
+  it('keeps the resize affordance geometric (no glyph or arrow content)', () => {
+    assert.match(css, /\.dd-col-resize/);
+    assert.match(css, /cursor:\s*col-resize/);
+    assert.ok(!/↔|↕|⇔|⇕|⟷|⟺/.test(css));
+  });
+
+  it('takes its palette from the shared token file', () => {
+    assert.match(css, /@import '\.\.\/shared\/tokens\.css'/);
+    // The token file owns the colours; nothing hard-codes a value here.
+    assert.ok(!/#[0-9a-f]{3,6}\b/i.test(stripped.replace(/rgba\(0, 0, 0,[^)]*\)/g, '')));
+  });
+
+  it('keeps the executed statement, the cell detail and the NULL style', () => {
+    assert.match(css, /\.dd-sql\b/);
+    assert.match(css, /\.dd-sql-text\b/);
+    assert.match(css, /\.dd-detail\b/);
+    assert.match(css, /\.dd-cell-detail\b/);
+    assert.match(css, /\.dd-null\s*\{[^}]*color:\s*var\(--dd-muted\)/);
+  });
+
+  it('ships no transition rule that no component renders', () => {
+    // A dead `.dd-fade` block was the previous state: it described a <transition>
+    // the app never rendered. Remounting the grid to animate a tab switch would
+    // cost more than it shows, so the rule must stay gone.
+    assert.ok(!/\.dd-fade/.test(css));
   });
 });

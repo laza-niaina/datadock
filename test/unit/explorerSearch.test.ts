@@ -156,9 +156,11 @@ describe('toQuickPickItem', () => {
 });
 
 describe('folder labels', () => {
-  it('renders the right-aligned count description', () => {
-    assert.equal(folderCountLabel(12), '12');
-    assert.equal(folderCountLabel(0), '0');
+  it('renders the count behind the folder word', () => {
+    assert.equal(folderCountLabel('tables', 12), 'Tables (12)');
+    assert.equal(folderCountLabel('views', 1), 'Views (1)');
+    assert.equal(folderCountLabel('procedures', 0), 'Procedures (0)');
+    assert.equal(folderCountLabel('functions', 3), 'Functions (3)');
   });
 
   it('singularizes the folder tooltip for one object', () => {

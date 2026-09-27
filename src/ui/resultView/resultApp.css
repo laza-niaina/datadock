@@ -19,24 +19,15 @@
  * element exists in this app).
  */
 
+/* The palette, the spacing scale and the control metrics live once in
+   `../shared/tokens.css`, which both this file and the connection form
+   import. Only result-view specifics are declared here. */
+@import '../shared/tokens.css';
+
 :root {
-  --dd-fg: var(--vscode-foreground);
-  --dd-border: var(--vscode-panel-border, var(--vscode-widget-border));
-  --dd-muted: var(--vscode-descriptionForeground);
-  --dd-input-bg: var(--vscode-input-background);
-  --dd-input-fg: var(--vscode-input-foreground);
-  --dd-input-border: var(--vscode-input-border, var(--vscode-input-background));
-  --dd-focus: var(--vscode-focusBorder, var(--vscode-tab-activeForeground));
   --dd-primary: var(--vscode-tab-activeForeground);
-  --dd-hover: var(--vscode-tab-hoverBackground);
   --dd-green: var(--vscode-charts-green);
   --dd-red: var(--vscode-errorForeground);
-  --dd-widget-bg: var(--vscode-editorWidget-background);
-  /* Zebra + header tone: `editorWidget-background` lifts one subtle step above
-     the editor surface in BOTH themes (`input-background` is white in light
-     themes, which would make stripes invisible on a white editor). */
-  --dd-stripe: var(--vscode-editorWidget-background);
-  color-scheme: light dark;
 }
 
 html,
@@ -205,9 +196,11 @@ body {
   margin-right: 2px;
   flex: none;
   padding: 3px;
-  background: #fff;
   border-radius: 3px;
-  box-shadow: 0 0 0 1px rgba(127, 127, 127, 0.35);
+  /* No plate and no hard-coded ring: the engine marks carry their own
+     colours, and a white disc read as a light-theme-only artifact. */
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--dd-border);
 }
 
 .dd-engine svg {
@@ -367,14 +360,123 @@ body {
   overflow: hidden;
 }
 
-.dd-fade-enter-active,
-.dd-fade-leave-active {
-  transition: opacity 150ms ease;
+/* Executed statement band ---------------------------------------------------
+   Folded by default so the grid keeps the height, expandable so the SQL that
+   produced the rows stays next to them. */
+.dd-sql {
+  border-bottom: 1px solid var(--dd-border);
+  background: var(--dd-bg);
 }
 
-.dd-fade-enter,
-.dd-fade-leave-to {
-  opacity: 0;
+.dd-sql-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--dd-space-1);
+  width: 100%;
+  min-height: 24px;
+  padding: 2px var(--dd-space-3);
+  font: inherit;
+  font-size: 0.9em;
+  color: var(--dd-muted);
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.dd-sql-toggle:hover {
+  color: var(--dd-fg);
+  background: var(--dd-hover);
+}
+
+.dd-sql-toggle:focus-visible {
+  outline: 1px solid var(--dd-focus);
+  outline-offset: -1px;
+}
+
+.dd-sql-toggle .dd-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.dd-sql-text {
+  margin: 0;
+  padding: var(--dd-space-1) var(--dd-space-3) var(--dd-space-2);
+  max-height: 120px;
+  overflow: auto;
+  font-family: var(--dd-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dd-fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+/* Read-only cell detail -----------------------------------------------------
+   The grid clips long values, so the full text is reachable from a popover
+   that names the column, its type and the row it came from. */
+.dd-detail-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.dd-detail-backdrop {
+  position: absolute;
+  inset: 0;
+}
+
+.dd-detail {
+  position: absolute;
+  max-width: 360px;
+  max-height: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dd-space-1);
+  padding: var(--dd-space-2) var(--dd-space-3);
+  background: var(--vscode-editorWidget-background, var(--dd-widget-bg));
+  border: 1px solid var(--dd-widget-border, var(--dd-border));
+  border-radius: var(--dd-radius);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+
+.dd-detail-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--dd-space-2);
+  font-size: 0.92em;
+}
+
+.dd-detail-col {
+  font-weight: 600;
+}
+
+.dd-detail-type,
+.dd-detail-row {
+  color: var(--dd-muted);
+}
+
+.dd-detail-row {
+  margin-left: auto;
+}
+
+.dd-detail-value {
+  margin: 0;
+  overflow: auto;
+  font-family: var(--dd-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--dd-fg);
+  user-select: text;
+}
+
+.dd-detail-null {
+  margin: 0;
+  color: var(--dd-muted);
+  font-style: italic;
 }
 
 .dd-empty {
@@ -498,11 +600,13 @@ ux-grid {
   box-sizing: border-box;
 }
 
-/* `theme-chalk` pins the ellipsis cells with four classes (0,4,0), so this
-   override needs the same to take effect. */
+/* `theme-chalk` pins the ellipsis cells with four classes (0,4,0) AND orders
+   its rule after our first, so this mirror of its exact selector (same
+   specificity, later in the cascade) is what actually wins. */
 .dd-grid-host--compact .plx-table.size--mini .plx-body--column.col--ellipsis,
 .dd-grid-host--compact .plx-table.size--mini .plx-header--column.col--ellipsis {
   height: var(--dd-compact-row);
+  box-sizing: border-box;
 }
 
 .dd-grid-host--compact .plx-table.size--mini .plx-body--column.col--ellipsis .plx-cell,
@@ -529,13 +633,49 @@ ux-grid {
 
 /* custom header / cell content ----------------------------------------------- */
 .dd-col-header {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 1px;
   width: 100%;
   box-sizing: border-box;
-  padding: 4px 6px;
+  padding: 4px 10px 4px 6px;
+}
+
+/* Manual column-resize handle: visible 1px separator, wider grab zone. */
+.dd-col-resize {
+  position: absolute;
+  top: 0;
+  right: -5px;
+  display: block;
+  width: 9px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.dd-col-resize-line {
+  position: absolute;
+  top: 0;
+  right: 4px;
+  display: block;
+  width: 1px;
+  height: 100%;
+  background: var(--dd-border);
+}
+
+.dd-col-resize:hover .dd-col-resize-line {
+  background: var(--dd-focus);
+}
+
+.dd-resizing,
+.dd-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 .dd-col-name-row {
@@ -573,6 +713,9 @@ ux-grid {
 }
 
 .dd-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--dd-space-1);
   line-height: 33px;
   padding: 0 6px;
   overflow: hidden;
@@ -580,8 +723,54 @@ ux-grid {
   white-space: nowrap;
 }
 
+.dd-cell-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Only rendered when the value is long enough to be clipped; hover reveals it
+   so the affordance never costs a column of icons. */
+.dd-cell-detail {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  color: var(--dd-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--dd-radius);
+  cursor: pointer;
+}
+
+.dd-cell:hover .dd-cell-detail,
+.dd-cell-detail:focus-visible {
+  display: inline-flex;
+}
+
+.dd-cell-detail:hover {
+  color: var(--dd-fg);
+  background: var(--dd-hover);
+}
+
+.dd-cell-detail:focus-visible {
+  outline: 1px solid var(--dd-focus);
+  outline-offset: 0;
+}
+
+.dd-cell-detail .dd-icon {
+  width: 14px;
+  height: 14px;
+}
+
 .dd-null {
-  color: #666;
+  /* Muted rather than hard-coded grey: the token also reads correctly in the
+     high-contrast themes. */
+  color: var(--dd-muted);
+  font-style: italic;
 }
 
 /* popovers ------------------------------------------------------------------- */

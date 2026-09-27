@@ -45,11 +45,13 @@ export function qualifiedName(parts: {
 /**
  * Flattens every connected profile into searchable object items.
  * Databases that fail to list are skipped so one broken connection does not
- * hide the objects of the healthy ones.
+ * hide the objects of the healthy ones; `onError` receives every such failure
+ * so the caller can log it instead of silently returning a short list.
  */
 export function explorerObjectItems(
   profiles: ReadonlyArray<{ id: string; name: string; database?: string }>,
   listTables: (ref: SchemaRef) => Promise<TableInfo[]>,
+  onError?: (connectionId: string, error: unknown) => void,
 ): Promise<ExplorerObjectItem[]> {
   const items: ExplorerObjectItem[] = [];
   return profiles
@@ -70,8 +72,10 @@ export function explorerObjectItems(
                 comment: relation.comment,
               });
             }
-          } catch {
-            // Unreachable connection: its tables are simply not searchable.
+          } catch (error) {
+            // Unreachable connection: its tables are simply not searchable, and
+            // the caller decides whether that deserves a log line.
+            onError?.(profile.id, error);
           }
         }),
       Promise.resolve(),
@@ -152,9 +156,14 @@ export function toQuickPickItem(item: ExplorerObjectItem): ExplorerQuickPickItem
   };
 }
 
-/** `Tables (12)` style folder description shared by every folder node. */
-export function folderCountLabel(count: number): string {
-  return String(count);
+/**
+ * `Tables (12)` folder description, the DB Explorer shape: the count sits
+ * behind the folder word so the row stays readable when the tree is narrow.
+ * Only rendered once the listing is known, never as a speculative `0`.
+ */
+export function folderCountLabel(folder: string, count: number): string {
+  const word = folder.charAt(0).toUpperCase() + folder.slice(1);
+  return `${word} (${count})`;
 }
 
 /** Singular/plural folder tooltip, DB Explorer style. */

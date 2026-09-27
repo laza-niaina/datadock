@@ -9,6 +9,7 @@
 import * as vscode from 'vscode';
 import type { ConnectionManager } from '../connections/connectionManager';
 import type { ConnectionStore } from '../connections/connectionStore';
+import { validateProfileFields, type ProfileFieldErrors } from '../connections/validation';
 import type { DriverRegistry } from '../db/driverRegistry';
 import { DbError } from '../db/errors';
 import type { ConnectionProfile, ConnectionSecrets, Logger } from '../db/types';
@@ -26,6 +27,7 @@ import {
   type EngineChoice,
 } from './connectionFormHtml';
 import { getEngineIcon } from './icons';
+import { connectionFormIconUri, connectionFormAssets, resultViewWebviewOptions } from './resultView/resultHost';
 
 /** Messages sent from the webview to the extension host. */
 type InboundMessage =
@@ -41,8 +43,7 @@ type OutboundMessage =
   | ({ type: 'init' } & ConnectionFormModel)
   | { type: 'busy'; busy: boolean; label?: string }
   | { type: 'testResult'; ok: boolean; message: string }
-  | { type: 'error'; message: string }
-  | { type: 'notice'; message: string }
+  | { type: 'error'; message: string; fields?: ProfileFieldErrors }
   | { type: 'filePicked'; target: string; value: string };
 
 const PANEL_VIEW_TYPE = 'dbclient.connectionForm';
@@ -78,7 +79,10 @@ export class ConnectionFormPanel {
         ? emptyDraft(baseProfile.id, baseProfile.engine, options.registry.get(baseProfile.engine))
         : draftFromProfile(baseProfile);
 
-    this.panel.webview.html = renderConnectionFormHtml(this.panel.webview);
+    this.panel.webview.html = renderConnectionFormHtml(
+      this.panel.webview,
+      connectionFormAssets(this.panel.webview),
+    );
 
     this.disposables.push(
       this.panel.webview.onDidReceiveMessage((message: InboundMessage) => {
@@ -115,10 +119,11 @@ export class ConnectionFormPanel {
 
     const panel = vscode.window.createWebviewPanel(
       PANEL_VIEW_TYPE,
-      mode === 'create' ? `New Connection - ${baseProfile.engine}` : `Edit Connection - ${baseProfile.name}`,
+      mode === 'create' ? 'Add Connection' : `Edit Connection - ${baseProfile.name}`,
       vscode.ViewColumn.Active,
-      { enableScripts: true, retainContextWhenHidden: false, localResourceRoots: [] },
+      resultViewWebviewOptions(),
     );
+    panel.iconPath = connectionFormIconUri();
 
     const instance = new ConnectionFormPanel(panel, options, mode, baseProfile, key);
     ConnectionFormPanel.open.set(key, instance);
@@ -157,8 +162,7 @@ export class ConnectionFormPanel {
       // guarantee no credential can reach either the log or the webview.
       this.options.logger.error('Connection form error.', { code: dbError.code, message: dbError.message });
       await this.post({ type: 'error', message: dbError.message });
-    }
-  }
+    }  }
 
   private async sendInit(): Promise<void> {
     const secretPresence =
@@ -172,6 +176,7 @@ export class ConnectionFormPanel {
       engines: this.engineChoices(),
       draft: this.draft,
       secretPresence,
+      sshSupported: this.options.manager.supportsSshTunnel,
     });
   }
 
@@ -224,6 +229,10 @@ export class ConnectionFormPanel {
     const profile = profileFromDraft(draft, this.baseProfile);
     const factory = this.options.registry.get(profile.engine);
 
+    if (!(await this.guard(profile, factory))) {
+      return;
+    }
+
     await this.post({ type: 'busy', busy: true, label: connect ? 'Saving and connecting...' : 'Saving...' });
     try {
       const saved = await this.options.store.save(profile, factory);
@@ -253,7 +262,6 @@ export class ConnectionFormPanel {
           throw new DbError('CONFIG_ERROR', `Connection '${saved.name}' no longer exists.`);
         }
         await this.options.manager.connect(config);
-        await this.post({ type: 'testResult', ok: true, message: `Saved and connected to '${saved.name}'.` });
       } catch (error) {
         const connectError = DbError.from(error);
         await this.post({
@@ -261,19 +269,52 @@ export class ConnectionFormPanel {
           ok: false,
           message: `Saved '${saved.name}', but the connection failed: ${connectError.message}`,
         });
+        return;
       }
+
+      // The form has done its job: the result is a live connection in the
+      // explorer, so the outcome is reported as a notification and the panel
+      // closes instead of leaving a success message behind.
+      await this.post({ type: 'busy', busy: false });
+      void vscode.window.showInformationMessage(`DataDock: connected to '${saved.name}'.`);
+      this.panel.dispose();
     } catch (error) {
       const dbError = DbError.from(error, 'CONFIG_ERROR');
-      await this.post({ type: 'error', message: dbError.message });
+      await this.post({ type: 'error', message: dbError.message, fields: validateProfileFields(profile, factory) });
     } finally {
       await this.post({ type: 'busy', busy: false });
     }
   }
 
+  /**
+   * Field-level validation before any I/O, so the user sees the problem next
+   * to the input instead of only in the status band.
+   */
+  private async guard(profile: ConnectionProfile, factory: ReturnType<DriverRegistry['get']>): Promise<boolean> {
+    const fields = validateProfileFields(profile, factory);
+    if (Object.keys(fields).length > 0) {
+      await this.post({ type: 'error', message: Object.values(fields).join('\n'), fields });
+      return false;
+    }
+    if (!this.options.manager.supportsSshTunnel && profile.ssh?.enabled) {
+      await this.post({
+        type: 'error',
+        message:
+          'SSH tunnelling is not available in this build, so this connection cannot be opened. Disable the tunnel, or use a network-level tunnel and point the host and port at its local end.',
+      });
+      return false;
+    }
+    return true;
+  }
+
   private async testConnection(draft: FormDraft): Promise<void> {
     const profile = profileFromDraft(draft, this.baseProfile);
 
-    await this.post({ type: 'busy', busy: true, label: 'Testing connection…' });
+    if (!(await this.guard(profile, this.options.registry.get(profile.engine)))) {
+      return;
+    }
+
+    await this.post({ type: 'busy', busy: true, label: 'Testing connection...' });
     try {
       const secrets = await this.mergeSecrets(draft);
       const result = await this.options.manager.test({ profile, secrets });

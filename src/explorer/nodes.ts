@@ -39,6 +39,8 @@ export interface ExplorerServices {
   readonly manager: ConnectionManager;
   readonly cache: MetadataCache;
   readonly registry: DriverRegistry;
+  /** Output channel: a failed listing must leave a trace outside the tree. */
+  readonly logger: { warn(message: string, data?: unknown): void; debug(message: string, data?: unknown): void };
 }
 
 /** Builds a stable, collision-free tree item id from path segments. */
@@ -376,7 +378,7 @@ export class FolderNode extends ExplorerNode {
   /** Records the object count as the right-aligned folder description. */
   applyCount(count: number): void {
     this.count = count;
-    this.description = folderCountLabel(count);
+    this.description = folderCountLabel(this.folder, count);
     this.tooltip = folderTooltip(this.folder, count);
   }
 
@@ -481,6 +483,17 @@ export class RoutineNode extends ExplorerNode {
     this.contextValue = 'dbclient.routine';
     this.iconPath = new vscode.ThemeIcon(routine.kind === 'procedure' ? 'symbol-method' : 'symbol-function');
     this.description = routine.routineType ?? routine.kind;
+    // Every other object row carries a tooltip; a bare name is not enough to
+    // tell a procedure from a function with the same name.
+    const lines = [
+      `**${routine.name}**`,
+      '',
+      `Kind: \`${routine.kind}\``,
+      routine.routineType ? `Returns: \`${routine.routineType}\`` : '',
+    ].filter((line) => line !== '');
+    const tooltip = new vscode.MarkdownString(lines.join('\n'));
+    tooltip.supportThemeIcons = true;
+    this.tooltip = tooltip;
   }
 
   async getChildren(): Promise<ExplorerNode[]> {

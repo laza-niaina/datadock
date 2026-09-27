@@ -25,8 +25,11 @@ implemented; anything else is on the roadmap and is not advertised as working.
 - **Secrets in the OS keychain** via VS Code `SecretStorage`. Passwords, SSH
   passwords and private keys are never written to settings, logs, exports or
   crash reports.
-- **Connection profiles** shared by every engine, with SSL/TLS and SSH tunnel
-  settings (SSH tunnelling itself needs the SSH service, see roadmap).
+- **Connection profiles** shared by every engine. The form is a two-step panel:
+  an engine catalog with the real engine marks, then the settings, with the
+  problem shown next to the field it belongs to. SSL/TLS is supported; the SSH
+  tunnel section is present but **disabled in this build**, because no SSH
+  transport is bundled (see roadmap).
 - **Metadata cache** with manual refresh and adjustable lifetime.
 - **SQL editor**: every `.sql` document can be associated with a DataDock
   connection (remembered per file, never written into the file itself). Run the
@@ -110,7 +113,14 @@ Drivers are added one at a time, each with its own tests:
    the first time (the choice is remembered for this file) before running. The
    chosen database is the run context: it is applied behind the scenes and never
    appears as an extra statement in the results.
-4. Click a table or view in the explorer to open the table viewer. Use Previous/Next, Search and column headers to navigate; editing controls appear only after row-editing support is implemented.
+4. Click a table or view in the explorer to open the table viewer, or use the
+   inline **Open Query** action to get a prefilled `SELECT` for it in a new SQL
+   document that already carries the connection and database context. In the
+   result panel, the executed statement is folded above the grid, the search box
+   states whether it filters the loaded rows or the server, ticked rows drive
+   the **Copy As** scope, and a clipped value stays readable through its tooltip
+   and the cell detail. Use Previous/Next and the column headers to navigate;
+   editing controls appear only after row-editing support is implemented.
 
 ## Security
 

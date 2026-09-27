@@ -92,26 +92,44 @@ const webviewOptions = {
   loader: { '.woff': 'file', '.woff2': 'file', '.ttf': 'file' },
 };
 
+/**
+ * Stylesheet of the connection form, compiled by a third esbuild entry into
+ * `dist/webview/formApp.css` and served through `asWebviewUri`. It imports
+ * `ui/shared/tokens.css`, the same token file the result view imports, so the
+ * two webviews cannot drift apart. A CSS entry point keeps the form's markup in
+ * TypeScript and its design in CSS instead of a 200-line inline string.
+ */
+/** @type {import('esbuild').BuildOptions} */
+const formStylesOptions = {
+  entryPoints: ['src/ui/formView/formApp.css'],
+  outfile: 'dist/webview/formApp.css',
+  bundle: true,
+  minify: production,
+  logLevel: 'info',
+  loader: { '.woff': 'file', '.woff2': 'file', '.ttf': 'file' },
+};
+
 async function main() {
+  const entries = [options, webviewOptions, formStylesOptions];
+
   if (watch) {
-    const ctxs = await Promise.all([esbuild.context(options), esbuild.context(webviewOptions)]);
+    const ctxs = await Promise.all(entries.map((entry) => esbuild.context(entry)));
     await Promise.all(ctxs.map((ctx) => ctx.watch()));
     copyRuntimeAssets();
     console.log('[esbuild] watching for changes...');
     return;
   }
 
-  await esbuild.build(options);
-  await esbuild.build(webviewOptions);
+  for (const entry of entries) {
+    await esbuild.build(entry);
+  }
   copyRuntimeAssets();
 
-  if (production && options.metafile) {
-    const size = fs.statSync(options.outfile).size;
-    console.log(`[esbuild] dist/extension.js = ${(size / 1024).toFixed(0)} kB`);
-  }
-  if (production && webviewOptions.metafile) {
-    const size = fs.statSync(webviewOptions.outfile).size;
-    console.log(`[esbuild] dist/webview/resultApp.js = ${(size / 1024).toFixed(0)} kB`);
+  if (production) {
+    for (const entry of entries) {
+      const size = fs.statSync(entry.outfile).size;
+      console.log(`[esbuild] ${entry.outfile} = ${(size / 1024).toFixed(0)} kB`);
+    }
   }
 }
 

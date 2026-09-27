@@ -133,6 +133,12 @@
         "icon": "$(new-file)"
       },
       {
+        "command": "dbclient.query.openForNode",
+        "title": "Open Query for Table",
+        "category": "DataDock",
+        "icon": "$(file-code)"
+      },
+      {
         "command": "dbclient.query.execute",
         "title": "Run SQL",
         "category": "DataDock",
@@ -279,13 +285,18 @@
           "group": "inline@1"
         },
         {
-          "command": "dbclient.node.refresh",
-          "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.(connection\\.connected|database|schema|folder|table|view)$/",
+          "command": "dbclient.table.view",
+          "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.(table|view)$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "dbclient.query.openForNode",
+          "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.(table|view)$/",
           "group": "inline@2"
         },
         {
-          "command": "dbclient.table.view",
-          "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.(table|view)$/",
+          "command": "dbclient.node.refresh",
+          "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.(connection\\.connected|database|schema|folder\\..*|table|view)$/",
           "group": "inline@3"
         },
         {
@@ -315,7 +326,7 @@
         },
         {
           "command": "dbclient.node.copyName",
-          "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.(database|schema|folder|table|view|column|routine)$/",
+          "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.(database|schema|folder\\..*|table|view|column|routine)$/",
           "group": "2_copy@1"
         },
         {
@@ -361,6 +372,11 @@
           "command": "dbclient.query.selectConnection",
           "when": "editorLangId == sql",
           "group": "2_connection@1"
+        },
+        {
+          "command": "dbclient.query.showHistory",
+          "when": "editorLangId == sql",
+          "group": "3_tools@1"
         }
       ],
       "commandPalette": [
@@ -398,6 +414,14 @@
         },
         {
           "command": "dbclient.node.refresh",
+          "when": "false"
+        },
+        {
+          "command": "dbclient.query.openForNode",
+          "when": "false"
+        },
+        {
+          "command": "dbclient.table.view",
           "when": "false"
         },
         {

@@ -77,23 +77,10 @@ export function registerConnectionCommands(register: Register, services: Command
       return;
     }
 
-    const picked = await vscode.window.showQuickPick(
-      factories.map((factory) => ({
-        label: factory.label,
-        description: factory.fileBased
-          ? 'local file'
-          : factory.defaultPort
-            ? `default port ${factory.defaultPort}`
-            : undefined,
-        factory,
-      })),
-      { title: 'Select a database engine', placeHolder: 'Engine' },
-    );
-    if (!picked) {
-      return;
-    }
-
-    const factory = picked.factory;
+    // The engine choice is the first step *inside* the panel: it shows the real
+    // engine marks in a catalog, so a second native Quick Pick in front of it
+    // would only add a hop. The first factory only seeds the draft.
+    const factory = factories[0];
     const profile = services.store.newProfile(factory.engine, factory);
     profile.name = services.store.nextAvailableName(profile.name, await services.store.list());
     ConnectionFormPanel.show(formOptions(services), 'create', profile);

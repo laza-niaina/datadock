@@ -29,6 +29,11 @@ export function panelIconUri(): vscode.Uri | undefined {
   return extensionRoot ? vscode.Uri.joinPath(extensionRoot, 'resources', 'icon', 'result-panel.svg') : undefined;
 }
 
+/** Panel icon of the connection form (MIT mark from the reference repo). */
+export function connectionFormIconUri(): vscode.Uri | undefined {
+  return extensionRoot ? vscode.Uri.joinPath(extensionRoot, 'resources', 'icon', 'connection.svg') : undefined;
+}
+
 /** Webview options shared by both result panels: scripts on, resources = bundle folder. */
 export function resultViewWebviewOptions(): vscode.WebviewPanelOptions & vscode.WebviewOptions {
   const root = webviewRootDir();
@@ -49,4 +54,15 @@ export function resultViewAssets(webview: vscode.Webview): ResultViewAssets {
     cssUri: cssUri ? cssUri.toString() : '',
     cspSource,
   };
+}
+
+/**
+ * Stylesheet of the connection form, built by the same esbuild webview step as
+ * the result bundle. Both webviews therefore share `ui/shared/tokens.css` and
+ * the same `dist/webview` resource root.
+ */
+export function connectionFormAssets(webview: vscode.Webview): { cssUri: string } {
+  const root = webviewRootDir();
+  const cssUri = root ? webview.asWebviewUri(vscode.Uri.joinPath(root, 'formApp.css')) : undefined;
+  return { cssUri: cssUri ? cssUri.toString() : '' };
 }

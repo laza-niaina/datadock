@@ -74,6 +74,7 @@ export function activate(context: vscode.ExtensionContext): void {
     manager,
     cache,
     registry: driverRegistry,
+    logger,
   });
 
   const treeView = vscode.window.createTreeView('dbclient.explorer', {
@@ -177,7 +178,18 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     // One item, two visually separated groups: connection, then engine+database.
-    sqlStatusBar.text = combinedSqlStatusText(labels);
+    // The session-state prefix keeps a disconnected connection from looking
+    // usable in the editor, which the profile facts alone cannot show.
+    const session = profile ? manager.statusOf(profile.id) : undefined;
+    const stateIcon =
+      session?.state === 'connected'
+        ? '$(pulse) '
+        : session?.state === 'error'
+          ? '$(warning) '
+          : session
+            ? '$(debug-disconnect) '
+            : '';
+    sqlStatusBar.text = stateIcon + combinedSqlStatusText(labels);
     sqlStatusBar.tooltip = 'DataDock context for this SQL file. Click to change connection or database.';
     sqlStatusBar.command = 'dbclient.query.manageContext';
     sqlStatusBar.show();
@@ -190,6 +202,23 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
+  // Block boundaries move while the user types, and a lens captured before an
+  // edit would run the wrong range. The provider is re-queried after a short
+  // idle period so typing does not re-render the lens bar on every keystroke.
+  let lensRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleLensRefresh = (uri: vscode.Uri): void => {
+    if (uri.scheme !== 'file' && uri.scheme !== 'untitled') {
+      return;
+    }
+    if (lensRefreshTimer) {
+      clearTimeout(lensRefreshTimer);
+    }
+    lensRefreshTimer = setTimeout(() => {
+      lensRefreshTimer = undefined;
+      void sqlCodeLens.refresh(uri);
+    }, 250);
+  };
+
   context.subscriptions.push(
     sqlStatusBar,
     vscode.languages.registerCodeLensProvider({ language: 'sql' }, sqlCodeLens),
@@ -197,15 +226,24 @@ export function activate(context: vscode.ExtensionContext): void {
       void refreshSqlStatus();
       refreshSqlLenses();
     }),
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (event.document.languageId === 'sql') {
+        scheduleLensRefresh(event.document.uri);
+      }
+    }),
     vscode.window.onDidChangeTextEditorSelection(() => void refreshSqlStatus()),
     associations.onDidChange((change) => {
       void refreshSqlStatus();
       void sqlCodeLens.refresh(vscode.Uri.parse(change.uri));
     }),
+    // A connect or a disconnect changes the state prefix of the item, so the
+    // session stream has to repaint it too.
+    manager.onDidChange(() => void refreshSqlStatus()),
     store.onDidChange(() => {
       void refreshSqlStatus();
       sqlCodeLens.refreshAll();
     }),
+    { dispose: () => lensRefreshTimer && clearTimeout(lensRefreshTimer) },
   );
   void refreshSqlStatus();
   refreshSqlLenses();

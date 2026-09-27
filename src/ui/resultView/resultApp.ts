@@ -46,8 +46,14 @@ Vue.use(UmyTable);
 declare global {
   interface Window {
     __DATADOCK_RESULT__?: unknown;
-    acquireVsCodeApi?: () => { postMessage(message: unknown): void };
+    acquireVsCodeApi?: () => VsCodeApi;
   }
+}
+
+interface VsCodeApi {
+  postMessage(message: unknown): void;
+  getState(): unknown;
+  setState(state: unknown): void;
 }
 
 type GridCellValue = string | number | null;
@@ -126,8 +132,22 @@ const OPERATORS = [
 
 // --- vscode bridge -----------------------------------------------------------
 
+/**
+ * VS Code hands out one API object per webview; asking twice is not part of
+ * the contract and `getState`/`setState` would not see the same store, so the
+ * instance is resolved once and reused.
+ */
+let vscodeApi: VsCodeApi | undefined;
+
+function api(): VsCodeApi | undefined {
+  if (!vscodeApi) {
+    vscodeApi = window.acquireVsCodeApi?.();
+  }
+  return vscodeApi;
+}
+
 function postMessage(message: unknown): void {
-  window.acquireVsCodeApi?.()?.postMessage(message);
+  api()?.postMessage(message);
 }
 
 // --- local SVGs --------------------------------------------------------------
@@ -142,6 +162,8 @@ const COPY_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2.7" y="2.7" width="8" height="8" rx="1.5"/><path d="M5.6 13.3h7.7V5.6"/></svg>';
 const DENSITY_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 4h11"/><path d="M2.5 8h11"/><path d="M2.5 12h11"/></svg>';
+const DETAIL_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.2"/><path d="M7 6.2v3.6"/><path d="M7 4.6h.01"/></svg>';
 
 function iconVNode(h: CreateElement, svg: string, className?: string): VNode {
   const classes = className ? ["dd-icon", className] : "dd-icon";
@@ -211,24 +233,39 @@ function computeWidth(
   return Math.min(150, Math.max(70, longest * 10));
 }
 
-function readScopeValue(scope: unknown): GridCellValue {
-  if (!scope || typeof scope !== "object") return null;
+/** Stable field key of a rendered cell, whatever shape the library uses. */
+function scopeKey(scope: unknown): string | undefined {
+  if (!scope || typeof scope !== "object") return undefined;
   const candidate = scope as {
-    row?: Record<string, unknown>;
     column?: { property?: unknown; field?: unknown; title?: unknown };
   };
   const column = candidate.column;
-  if (!candidate.row || !column) return null;
-  const rawKey =
-    typeof column.property === "string"
-      ? column.property
-      : typeof column.field === "string"
-        ? column.field
-        : typeof column.title === "string"
-          ? column.title
-          : undefined;
-  if (!rawKey) return null;
-  const value = candidate.row[rawKey];
+  if (!column) return undefined;
+  if (typeof column.property === "string") return column.property;
+  if (typeof column.field === "string") return column.field;
+  if (typeof column.title === "string") return column.title;
+  return undefined;
+}
+
+/** Row index of a rendered cell, or -1 when the library did not expose it. */
+function scopeRowIndex(scope: unknown): number {
+  if (!scope || typeof scope !== "object") return -1;
+  const candidate = scope as { $rowIndex?: unknown; rowIndex?: unknown };
+  const raw = candidate.$rowIndex ?? candidate.rowIndex;
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : -1;
+}
+
+/** Field key of a rendered cell, used to label the detail panel. */
+function scopeFieldName(scope: unknown): string {
+  return scopeKey(scope) ?? "";
+}
+
+function readScopeValue(scope: unknown): GridCellValue {
+  if (!scope || typeof scope !== "object") return null;
+  const row = (scope as { row?: Record<string, unknown> }).row;
+  const rawKey = scopeKey(scope);
+  if (!row || !rawKey) return null;
+  const value = row[rawKey];
   return value === null ||
     value === undefined ||
     typeof value === "string" ||
@@ -279,6 +316,67 @@ interface CopyMenuState {
   readonly rowIndex: number;
 }
 
+/** Manual widths live per grid instance, keyed by grid id then stable field key. */
+type ResizeWidths = Record<string, Record<string, number>>;
+
+/** Read-only detail of one cell, anchored to the cell that opened it. */
+interface DetailState {
+  readonly left: number;
+  readonly top: number;
+  readonly rowIndex: number;
+  readonly field: string;
+}
+
+/**
+ * Presentation state that must survive the host repainting the page.
+ *
+ * The host re-renders the whole document to deliver a new page, a new filter or
+ * a refreshed result. Without this, the active result tab, the search text and
+ * the column layout would silently reset on every one of those actions.
+ */
+interface PersistedState {
+  /** Grid id the saved state was captured on, so a stale entry is ignored. */
+  readonly gridId?: string;
+  readonly search?: string;
+  readonly hidden?: string[];
+  readonly sqlOpen?: boolean;
+  readonly widths?: ResizeWidths;
+  readonly scrollTop?: number;
+}
+
+function readState(): PersistedState {
+  const stored = api()?.getState();
+  return stored && typeof stored === "object" ? (stored as PersistedState) : {};
+}
+
+function writeState(state: PersistedState): void {
+  api()?.setState(state);
+}
+
+/** Column-width floor: 50px keeps the two-line name/type header usable. */
+const RESIZE_MIN_WIDTH = 50;
+/** Double-click auto-fit never exceeds this, one huge TEXT value stays capped. */
+const RESIZE_MAX_AUTO_WIDTH = 420;
+
+/** Positions a popover under the element that opened it, kept inside the panel. */
+function anchorRect(
+  event: MouseEvent,
+  width: number,
+  height: number,
+): PopoverRect {
+  let left = 16;
+  let top = 60;
+  if (event.currentTarget instanceof HTMLElement) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    left = rect.left;
+    top = rect.bottom + 4;
+  }
+  return {
+    left: Math.max(8, Math.min(left, window.innerWidth - width - 8)),
+    top: Math.max(8, Math.min(top, window.innerHeight - height - 8)),
+  };
+}
+
 /** Resolves the data row under the pointer from the umy-table DOM. */
 function rowIndexOfTarget(target: EventTarget | null): number {
   if (!target || !(target instanceof Element)) {
@@ -307,6 +405,14 @@ interface DdData {
   gridHostHeight: number;
   copyMenu: CopyMenuState | null;
   compact: boolean;
+  /** Manual widths per grid id, then per stable field key. Row-number index stays fixed. */
+  widths: ResizeWidths;
+  /** Executed SQL of the active result, folded by default. */
+  sqlOpen: boolean;
+  /** Rows ticked in the checkbox column; drives the Copy As selection scope. */
+  selectedRows: Record<string, GridCellValue>[];
+  /** Open read-only cell detail, or undefined. */
+  detail?: DetailState;
 }
 
 interface DdMethods {
@@ -314,8 +420,8 @@ interface DdMethods {
   onSearchInput(value: string): void;
   onSearchKeyup(event: KeyboardEvent): void;
   clearSearch(): void;
-  toggleColumns(): void;
-  toggleExport(): void;
+  openColumnsPopover(event: MouseEvent): void;
+  openExportPopover(event: MouseEvent): void;
   closePopovers(): void;
   toggleColumn(name: string, checked: boolean): void;
   chooseFormat(format: GridFormat): void;
@@ -330,7 +436,22 @@ interface DdMethods {
   clearFilter(): void;
   applyQuery(): void;
   onSortChange(event: unknown): void;
+  columnWidth(field: Field): number;
+  columnKey(field: Field): string;
+  setColumnWidth(gridId: string, fieldKey: string, width: number): void;
+  beginResize(field: Field, event: PointerEvent): void;
+  autoFitColumn(field: Field): void;
   cellVNode(h: CreateElement, scope: unknown): VNode;
+  onSelectionChange(rows: unknown): void;
+  toggleSql(): void;
+  openDetail(field: Field, rowIndex: number, event: MouseEvent): void;
+  closeDetail(): void;
+  persistState(): void;
+  restoreScroll(): void;
+  captureScroll(): void;
+  scrollTopOf(): number;
+  renderSqlBand(h: CreateElement): VNode | null;
+  renderDetail(h: CreateElement): VNode | null;
   renderHead(h: CreateElement): VNode | null;
   renderTabs(h: CreateElement): VNode | null;
   renderToolbar(h: CreateElement): VNode;
@@ -362,6 +483,18 @@ interface DdComputed {
   canExportSql: boolean;
   showReveal: boolean;
   pagerLabel: string;
+  /** Executed SQL of the active result, when the host sent one. */
+  sqlText: string;
+  /**
+   * Where the search box actually looks. Filtering the rows already loaded is
+   * not the same operation as filtering the table on the server, and the label
+   * has to say which one it is.
+   */
+  searchScope: { placeholder: string; title: string };
+  /** Rows the Copy As menu should use, in the documented order of preference. */
+  copyRows: Record<string, GridCellValue>[];
+  /** True when a checkbox selection exists, so the menu can offer it. */
+  hasSelection: boolean;
 }
 
 // --- component ------------------------------------------------------------------
@@ -370,13 +503,17 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
   el: "#app",
 
   data(): DdData {
+    // Only presentation state is restored. The active tab stays the host's
+    // decision: it deliberately opens the first failing statement, and nothing
+    // in this build repaints a query result underneath the user.
+    const saved = readState();
     return {
       active: Math.min(
         Math.max(0, init.activeIndex),
         Math.max(0, init.grids.length - 1),
       ),
-      search: init.search ?? "",
-      hidden: [],
+      search: typeof saved.search === "string" ? saved.search : init.search ?? "",
+      hidden: Array.isArray(saved.hidden) ? saved.hidden.filter((n) => typeof n === "string") : [],
       columnsOpen: false,
       exportOpen: false,
       exportFormat: "csv",
@@ -393,6 +530,10 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
       gridHostHeight: 300,
       copyMenu: null,
       compact: init.compact === true,
+      widths: saved.widths && typeof saved.widths === "object" ? saved.widths : {},
+      sqlOpen: saved.sqlOpen === true,
+      selectedRows: [],
+      detail: undefined,
     };
   },
 
@@ -461,19 +602,68 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
       if (isTableMode) {
         const current = this.pageIndex + 1;
         const total = Math.max(1, init.pageCount ?? 1);
-        return `${current} / ${total}`;
+        // The row count comes from the host, so the pager states both the
+        // position in the table and the size of the whole table.
+        const rows =
+          typeof init.totalRows === "number"
+            ? ` · ${init.totalRows.toLocaleString()} rows`
+            : "";
+        return `Page ${current} / ${total}${rows}`;
       }
       return `${this.displayRows.length} rows`;
+    },
+    sqlText(): string {
+      return this.grid?.statementSql ?? "";
+    },
+    searchScope(): { placeholder: string; title: string } {
+      return isTableMode
+        ? {
+            placeholder: "Filter on the server",
+            title: "Sends the filter to the database and reloads this page. Press Enter to apply.",
+          }
+        : {
+            placeholder: "Search loaded rows",
+            title:
+              "Filters the rows already loaded in this result. The database is not queried again.",
+          };
+    },
+    hasSelection(): boolean {
+      return this.selectedRows.length > 0;
+    },
+    copyRows(): Record<string, GridCellValue>[] {
+      if (this.selectedRows.length > 0) {
+        return this.selectedRows;
+      }
+      const rowIndex = this.copyMenu?.rowIndex ?? -1;
+      if (rowIndex >= 0 && this.displayRows[rowIndex]) {
+        return [this.displayRows[rowIndex]];
+      }
+      return this.displayRows;
     },
   },
 
   mounted(): void {
-    this.$nextTick(() => this.remeasure());
+    this.$nextTick(() => {
+      this.remeasure();
+      this.restoreScroll();
+    });
     window.addEventListener("resize", () => this.remeasure());
-    window.addEventListener("message", (event: MessageEvent) => {
-      const message = event.data as { type?: string; compact?: unknown } | undefined;
-      if (message && message.type === "setCompact" && typeof message.compact === "boolean") {
-        this.compact = message.compact;
+    // Escape closes whatever overlay is open, outermost first, and returns
+    // focus to the grid instead of leaving it on a removed element.
+    window.addEventListener("keydown", (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (this.detail) {
+        this.closeDetail();
+      } else if (this.copyMenu) {
+        this.closeCopyMenu();
+      } else if (this.columnsOpen || this.exportOpen || this.filterDraft) {
+        this.closePopovers();
+      } else {
+        return;
+      }
+      const grid = this.$refs.grid;
+      if (grid instanceof HTMLElement) {
+        grid.focus();
       }
     });
     if (isTableMode) {
@@ -488,6 +678,42 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
         this.gridHostHeight = Math.max(120, host.clientHeight);
       }
     },
+
+    // --- state that must outlive a host repaint -----------------------------
+    persistState(): void {
+      writeState({
+        gridId: this.grid?.id,
+        search: this.search,
+        hidden: this.hidden,
+        sqlOpen: this.sqlOpen,
+        widths: this.widths,
+        scrollTop: this.scrollTopOf(),
+      });
+    },
+    captureScroll(): void {
+      // Called right before a message that makes the host repaint the page.
+      this.persistState();
+    },
+    scrollTopOf(): number {
+      const grid = this.$refs.grid;
+      const wrapper =
+        grid instanceof Element ? grid.querySelector(".plx-table--body-wrapper") : null;
+      return wrapper instanceof HTMLElement ? wrapper.scrollTop : 0;
+    },
+    restoreScroll(): void {
+      const saved = readState();
+      if (typeof saved.scrollTop !== "number" || saved.scrollTop <= 0) {
+        return;
+      }
+      const grid = this.$refs.grid;
+      const wrapper =
+        grid instanceof Element ? grid.querySelector(".plx-table--body-wrapper") : null;
+      if (wrapper instanceof HTMLElement) {
+        wrapper.scrollTop = saved.scrollTop;
+      }
+    },
+
+    // --- search --------------------------------------------------------------
     onSearchInput(value: string): void {
       this.search = value;
     },
@@ -505,13 +731,19 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
         this.applyQuery();
       }
     },
-    toggleColumns(): void {
-      this.columnsOpen = !this.columnsOpen;
-      this.exportOpen = false;
+    /** Anchors the column popover to its button instead of a fixed offset. */
+    openColumnsPopover(event: MouseEvent): void {
+      this.closePopovers();
+      const rect = anchorRect(event, 240, 320);
+      this.columnsOpen = true;
+      this.popoverRect = rect;
     },
-    toggleExport(): void {
-      this.exportOpen = !this.exportOpen;
-      this.columnsOpen = false;
+    /** Anchors the export popover to its button instead of a fixed offset. */
+    openExportPopover(event: MouseEvent): void {
+      this.closePopovers();
+      const rect = anchorRect(event, 220, 260);
+      this.exportOpen = true;
+      this.popoverRect = rect;
     },
     closePopovers(): void {
       this.columnsOpen = false;
@@ -538,6 +770,7 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
       if (!isTableMode) {
         message.gridId = grid.id;
       }
+      this.captureScroll();
       postMessage(message);
       this.exportOpen = false;
     },
@@ -548,6 +781,7 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
       }
     },
     refresh(): void {
+      this.captureScroll();
       postMessage({ type: "refresh", search: this.search });
     },
     page(delta: number): void {
@@ -555,6 +789,7 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
       const next = Math.min(Math.max(0, this.pageIndex + delta), total);
       if (next === this.pageIndex) return;
       this.pageIndex = next;
+      this.captureScroll();
       postMessage({ type: "page", offset: next * (init.pageSize ?? 100) });
     },
     openFilter(name: string, event: MouseEvent): void {
@@ -642,6 +877,10 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
         column?: { property?: unknown; title?: unknown };
         order?: unknown;
       };
+      const order =
+        candidate.order === "asc" || candidate.order === "desc"
+          ? candidate.order
+          : undefined;
       const rawProp =
         typeof candidate.prop === "string"
           ? candidate.prop
@@ -650,10 +889,6 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
             : typeof candidate.column?.title === "string"
               ? candidate.column.title
               : undefined;
-      const order =
-        candidate.order === "asc" || candidate.order === "desc"
-          ? candidate.order
-          : undefined;
       if (!rawProp) return;
       const field = this.fields.find((f) => f.field === rawProp);
       if (!field) return;
@@ -668,13 +903,147 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
           : undefined;
       }
     },
+    columnKey(field: Field): string {
+      return `${this.grid?.id ?? "grid"}::${field.field}`;
+    },
+    columnWidth(field: Field): number {
+      const gridWidths = this.grid ? this.widths[this.grid.id] : undefined;
+      const manual = gridWidths ? gridWidths[field.field] : undefined;
+      if (typeof manual === "number" && Number.isFinite(manual)) {
+        return Math.max(RESIZE_MIN_WIDTH, Math.round(manual));
+      }
+      // Width flows through minWidth so umy-table still grows for long compact
+      // content and keeps header/body cells aligned in one column definition.
+      return computeWidth(field, this.displayRows);
+    },
+    setColumnWidth(gridId: string, fieldKey: string, width: number): void {
+      const next = Math.max(RESIZE_MIN_WIDTH, Math.round(width));
+      const current = this.widths[gridId] ?? {};
+      // Vue 2 reactivity for a dynamic per-grid key.
+      this.$set(this.widths, gridId, { ...current, [fieldKey]: next });
+    },
+    beginResize(field: Field, event: PointerEvent): void {
+      const grid = this.grid;
+      if (!grid) return;
+      // The handle consumes its own click/drag so header sorting never fires.
+      event.preventDefault();
+      event.stopPropagation();
+      const pointerId = event.pointerId;
+      const handle = event.currentTarget;
+      const target = handle instanceof HTMLElement ? handle : null;
+      const startX = event.clientX;
+      const startWidth = this.columnWidth(field);
+      const gridId = grid.id;
+      const fieldKey = field.field;
+      const move = (moveEvent: PointerEvent): void => {
+        if (moveEvent.pointerId !== pointerId) return;
+        this.setColumnWidth(gridId, fieldKey, startWidth + (moveEvent.clientX - startX));
+      };
+      const stop = (stopEvent: PointerEvent): void => {
+        if (stopEvent.pointerId !== pointerId) return;
+        stopEvent.preventDefault();
+        stopEvent.stopPropagation();
+        window.removeEventListener("pointermove", move, true);
+        window.removeEventListener("pointerup", stop, true);
+        window.removeEventListener("pointercancel", stop, true);
+        document.body.classList.remove("dd-resizing");
+        // A capture release after removeEventListener keeps later drags clean.
+        try {
+          target?.releasePointerCapture(pointerId);
+        } catch {
+          // Best effort only; removal above already detached the drag.
+        }
+      };
+      window.addEventListener("pointermove", move, true);
+      window.addEventListener("pointerup", stop, true);
+      window.addEventListener("pointercancel", stop, true);
+      document.body.classList.add("dd-resizing");
+      try {
+        target?.setPointerCapture(pointerId);
+      } catch {
+        // Pointer capture is best-effort; window-level listeners still track it.
+      }
+    },
+    autoFitColumn(field: Field): void {
+      const grid = this.grid;
+      if (!grid) return;
+      const fitted = computeWidth(field, this.displayRows);
+      this.setColumnWidth(
+        grid.id,
+        field.field,
+        Math.min(RESIZE_MAX_AUTO_WIDTH, fitted),
+      );
+    },
     cellVNode(h: CreateElement, scope: unknown): VNode {
       const value = readScopeValue(scope);
-      const content: VNode =
-        value == null
-          ? h("span", { class: "dd-null" }, "(NULL)")
-          : h("span", {}, String(value));
-      return h("div", { class: "dd-cell" }, [content]);
+      if (value == null) {
+        return h("div", { class: "dd-cell" }, [h("span", { class: "dd-null" }, "(NULL)")]);
+      }
+      const text = String(value);
+      // Long values are clipped by the cell, so the full content stays
+      // reachable twice: a native tooltip, and the read-only detail panel.
+      const long = text.length > 32;
+      const rowIndex = scopeRowIndex(scope);
+      const children: VNode[] = [h("span", { class: "dd-cell-text" }, text)];
+      if (long && rowIndex >= 0) {
+        const field = scopeFieldName(scope);
+        children.push(
+          h(
+            "button",
+            {
+              class: "dd-cell-detail",
+              attrs: {
+                type: "button",
+                title: "Show the full value",
+                "aria-label": `Show the full value of this cell`,
+              },
+              on: {
+                click: (event: MouseEvent) => {
+                  event.stopPropagation();
+                  this.openDetail(
+                    { field, name: field },
+                    rowIndex,
+                    event,
+                  );
+                },
+              },
+            },
+            [iconVNode(h, DETAIL_SVG)],
+          ),
+        );
+      }
+      return h(
+        "div",
+        {
+          class: "dd-cell",
+          attrs: long ? { title: text } : {},
+        },
+        children,
+      );
+    },
+
+    /** Checkbox column selection: the reference rows drive the Copy As scope. */
+    onSelectionChange(rows: unknown): void {
+      this.selectedRows = Array.isArray(rows)
+        ? (rows.filter((row) => row && typeof row === "object") as Record<
+            string,
+            GridCellValue
+          >[])
+        : [];
+    },
+
+    toggleSql(): void {
+      this.sqlOpen = !this.sqlOpen;
+      this.persistState();
+    },
+
+    openDetail(field: Field, rowIndex: number, event: MouseEvent): void {
+      const rect = anchorRect(event, 320, 200);
+      this.detail = { ...rect, rowIndex, field: field.field };
+    },
+
+    closeDetail(): void {
+      this.detail = undefined;
     },
 
     // --- Copy As context menu (DBCode grid right-click) --------------------------
@@ -722,18 +1091,13 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
     },
 
     runCopy(format: CopyFormat | "quick"): void {
-      const menu = this.copyMenu;
       const columns: GridColumn[] = this.activeFields.map((field) => ({
         name: field.name,
         type: field.type,
       }));
-      const rowIndex = menu && menu.rowIndex >= 0 ? menu.rowIndex : -1;
-      const useRow = format === "quick" || (menu !== null && menu.section === "selection");
-      const source =
-        useRow && rowIndex >= 0 && this.displayRows[rowIndex]
-          ? [this.displayRows[rowIndex]]
-          : this.displayRows;
-      const rows: GridCellValue[][] = source.map((record) =>
+      // Scope, in order of preference: the ticked rows, the right-clicked row,
+      // then everything. `copyRows` is the single place that decides.
+      const rows: GridCellValue[][] = this.copyRows.map((record) =>
         this.activeFields.map((field) => record[field.field] ?? null),
       );
       const text = copyPayload(
@@ -837,8 +1201,11 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
           h("input", {
             attrs: {
               type: "text",
-              placeholder: "Input To Search Data",
-              "aria-label": "Search data",
+              // The placeholder names the scope: loaded rows locally, or the
+              // server. "Search" alone would hide a real behavioural difference.
+              placeholder: this.searchScope.placeholder,
+              title: this.searchScope.title,
+              "aria-label": this.searchScope.placeholder,
             },
             domProps: { value: this.search },
             on: {
@@ -873,7 +1240,7 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
           {
             class: ["dd-btn", this.columnsOpen ? "is-active" : ""],
             attrs: { type: "button", title: "Select Columns" },
-            on: { click: () => this.toggleColumns() },
+            on: { click: (event: MouseEvent) => this.openColumnsPopover(event) },
           },
           [iconVNode(h, COLUMNS_SVG)],
         ),
@@ -909,7 +1276,7 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
           {
             class: ["dd-btn", this.exportOpen ? "is-active" : ""],
             attrs: { type: "button", title: "Export Data" },
-            on: { click: () => this.toggleExport() },
+            on: { click: (event: MouseEvent) => this.openExportPopover(event) },
           },
           [iconVNode(h, DOWNLOAD_SVG)],
         ),
@@ -1031,20 +1398,51 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
         );
       }
       // Database Client Row_Header: name first, type on a second muted line.
+      // The handle is two plain spans (no pseudo-element, no glyph content):
+      // outer 9px grab zone with col-resize cursor, inner 1px separator.
+      // Drag-only: the handle consumes pointer/click so header sorting never fires.
       return h("div", { class: "dd-col-header" }, [
         h("div", { class: "dd-col-name-row" }, nameRow),
         field.type ? h("div", { class: "dd-col-type" }, field.type) : null,
+        h(
+          "span",
+          {
+            key: `resize-${this.columnKey(field)}`,
+            class: "dd-col-resize",
+            attrs: {
+              role: "separator",
+              "aria-orientation": "vertical",
+              "aria-label": `Resize ${field.name} column`,
+              title: `Resize ${field.name} column`,
+            },
+            on: {
+              pointerdown: (event: PointerEvent) =>
+                this.beginResize(field, event),
+              dblclick: (event: MouseEvent) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.autoFitColumn(field);
+              },
+              click: (event: MouseEvent) => {
+                event.preventDefault();
+                event.stopPropagation();
+              },
+            },
+          },
+          [h("span", { class: "dd-col-resize-line" })],
+        ),
       ]);
     },
 
     renderGrid(h: CreateElement): VNode {
       const columns = this.activeFields.map((field) =>
         h("ux-table-column", {
+          key: this.columnKey(field),
           props: {
             field: field.field,
             title: field.name,
             sortable: "custom",
-            minWidth: computeWidth(field, this.displayRows),
+            minWidth: this.columnWidth(field),
           },
           scopedSlots: {
             header: () => this.renderColumnHeader(h, field),
@@ -1052,6 +1450,17 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
           },
         }),
       );
+
+      // Selection column: the reference grid's checkbox column. It feeds the
+      // Copy As scope and gives keyboard users a row-granular target; it never
+      // edits anything, because no driver in this build can write a row back.
+      const selectCol = h("ux-table-column", {
+        props: {
+          type: "checkbox",
+          width: 34,
+          align: "center",
+        },
+      });
 
       const indexCol = h("ux-table-column", {
         props: {
@@ -1077,11 +1486,76 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
           },
           on: {
             "sort-change": (evt: unknown) => this.onSortChange(evt),
+            "selection-change": (rows: unknown) => this.onSelectionChange(rows),
           },
         },
-        [indexCol, ...columns],
+        [selectCol, indexCol, ...columns],
       );
-    },    renderGridHost(h: CreateElement): VNode {
+    },
+
+    renderSqlBand(h: CreateElement): VNode | null {
+      const sql = this.sqlText;
+      if (sql === "") return null;
+      return h("div", { class: "dd-sql" }, [
+        h(
+          "button",
+          {
+            class: ["dd-sql-toggle", this.sqlOpen ? "is-open" : ""],
+            attrs: {
+              type: "button",
+              "aria-expanded": this.sqlOpen ? "true" : "false",
+              title: this.sqlOpen ? "Hide the executed statement" : "Show the executed statement",
+            },
+            on: { click: () => this.toggleSql() },
+          },
+          [
+            iconVNode(h, iconChevron(this.sqlOpen ? "down" : "right")),
+            h("span", { class: "dd-sql-label" }, "Executed statement"),
+          ],
+        ),
+        this.sqlOpen ? h("pre", { class: "dd-sql-text" }, sql) : null,
+      ]);
+    },
+
+    renderDetail(h: CreateElement): VNode | null {
+      const detail = this.detail;
+      if (!detail) return null;
+      const row = this.displayRows[detail.rowIndex];
+      if (!row) return null;
+      const field = this.fields.find((f) => f.field === detail.field);
+      const value = row[detail.field];
+      return h("div", { class: "dd-detail-layer" }, [
+        // Backdrop first so a click anywhere else closes the panel; the panel
+        // itself stops the propagation.
+        h("div", {
+          class: "dd-detail-backdrop",
+          on: { click: () => this.closeDetail() },
+        }),
+        h(
+          "div",
+          {
+            class: "dd-detail",
+            style: { left: `${detail.left}px`, top: `${detail.top}px` },
+            attrs: { role: "dialog", "aria-label": "Cell detail" },
+            on: {
+              click: (event: MouseEvent) => event.stopPropagation(),
+            },
+          },
+          [
+            h("div", { class: "dd-detail-title" }, [
+              h("span", { class: "dd-detail-col" }, field?.name ?? detail.field),
+              field?.type ? h("span", { class: "dd-detail-type" }, field.type) : null,
+              h("span", { class: "dd-detail-row" }, `row ${detail.rowIndex + 1}`),
+            ]),
+            value == null
+              ? h("p", { class: "dd-detail-null" }, "NULL")
+              : h("pre", { class: "dd-detail-value" }, String(value)),
+          ],
+        ),
+      ]);
+    },
+
+    renderGridHost(h: CreateElement): VNode {
       // The density class lives on this real element (not on the ux-grid
       // component, whose class lands on an inner wrapper) so the CSS overrides
       // can scope through it, and the custom property inherits down.
@@ -1101,9 +1575,13 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
     },
 
     renderColumnsPopover(h: CreateElement): VNode {
+      const rect = this.popoverRect ?? { left: 16, top: 60 };
       return h(
         "div",
-        { class: "dd-popover", style: { top: "36px", left: "190px" } },
+        {
+          class: "dd-popover",
+          style: { top: `${rect.top}px`, left: `${rect.left}px` },
+        },
         [
           h("div", { class: "dd-popover-title" }, "Columns"),
           h(
@@ -1131,9 +1609,13 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
     },
 
     renderExportPopover(h: CreateElement): VNode {
+      const rect = this.popoverRect ?? { left: 16, top: 60 };
       return h(
         "div",
-        { class: "dd-popover", style: { top: "36px", left: "220px" } },
+        {
+          class: "dd-popover",
+          style: { top: `${rect.top}px`, left: `${rect.left}px` },
+        },
         [
           h("div", { class: "dd-popover-title" }, "Export Format"),
           h(
@@ -1310,13 +1792,23 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
               style: { left: `${menu.left + 178}px`, top: `${menu.top}px` },
             },
             [
-              item("selection", "Selection", {
-                active: menu.section === "selection",
-                sub: true,
-                onEnter: () => this.setCopySection("selection"),
-                onClick: () => this.setCopySection("selection"),
-              }),
-              item("all", "All", {
+              // The label states the scope it will actually use, so a copy is
+              // never a surprise: ticked rows, else the row under the pointer.
+              item(
+                "selection",
+                this.hasSelection
+                  ? `Selected rows (${this.selectedRows.length})`
+                  : menu.rowIndex >= 0
+                    ? "This row"
+                    : "Selected rows",
+                {
+                  active: menu.section === "selection",
+                  sub: true,
+                  onEnter: () => this.setCopySection("selection"),
+                  onClick: () => this.setCopySection("selection"),
+                },
+              ),
+              item("all", "All rows", {
                 active: menu.section === "all",
                 sub: true,
                 onEnter: () => this.setCopySection("all"),
@@ -1383,13 +1875,18 @@ const ResultApp = Vue.extend<DdData, DdMethods, DdComputed>({
   },
 
   render(h: CreateElement): VNode {
+    // Horizontal bands, in reading order: context, result tabs, the executed
+    // statement (folded), the action bar, the state of the active result, then
+    // the grid itself. Overlays come last so they always sit on top.
     return h("div", { class: "dd-root" }, [
       this.renderHead(h),
       this.renderTabs(h),
+      this.renderSqlBand(h),
       this.renderToolbar(h),
       this.renderBanner(h),
       this.renderGridHost(h),
       this.renderPopovers(h),
+      this.renderDetail(h),
       this.renderCopyMenu(h),
     ]);
   },

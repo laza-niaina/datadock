@@ -6,8 +6,9 @@
  */
 
 import * as vscode from 'vscode';
-import { ExplorerNode, FolderNode, RelationNode } from '../explorer/nodes';
+import { ExplorerNode, FolderNode, RelationNode, cacheKey } from '../explorer/nodes';
 import {
+  type ExplorerObjectItem,
   type ExplorerQuickPickItem,
   explorerObjectItems,
   qualifiedName,
@@ -57,9 +58,10 @@ export function registerExplorerCommands(register: Register, services: CommandSe
 
   register('dbclient.node.copyName', async (node?: unknown) => {
     const label = labelOf(node);
-    if (label) {
-      await vscode.env.clipboard.writeText(label);
+    if (!label) {
+      return;
     }
+    await vscode.env.clipboard.writeText(label);
   });
 
   /** Qualifies the label with its database (and schema) when known. */
@@ -95,42 +97,61 @@ export function registerExplorerCommands(register: Register, services: CommandSe
       return;
     }
 
-    const tablesOf = async (ref: { connectionId: string; database: string }) => {
+    // Reads the metadata cache the explorer already fills, so searching costs
+    // nothing on profiles the user has visited, and never two listings for the
+    // same database.
+    const tablesOf = async (ref: { connectionId: string; database: string; schema?: string }) => {
       const driver = services.manager.requireDriver(ref.connectionId);
-      return driver.listTables(ref);
+      return services.cache.getOrLoad(cacheKey(ref.connectionId, ref.database, ref.schema, 'tables'), () =>
+        driver.listTables(ref),
+      );
     };
-    void vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Window, title: 'DataDock: indexing database objects…' },
-      async () => {
-        const items = await explorerObjectItems(connected, tablesOf);
-        if (items.length === 0) {
-          void vscode.window.showInformationMessage('No tables or views found on the connected profiles.');
-          return;
-        }
-        const pick = vscode.window.createQuickPick<ExplorerQuickPickItem>();
-        pick.placeholder = 'Go to table or view, across every connected database (fuzzy).';
-        pick.matchOnDescription = true;
-        pick.matchOnDetail = true;
-        pick.items = items.slice(0, 200).map((item) => toQuickPickItem(item));
-        pick.activeItems = pick.items.slice(0, 1);
-        const selected = await new Promise<ExplorerQuickPickItem | undefined>((resolve) => {
-          pick.onDidAccept(() => resolve(pick.selectedItems[0]));
-          pick.onDidHide(() => resolve(undefined));
-          pick.show();
-        });
-        if (!selected) {
-          return;
-        }
-        const chosen = selected.item;
-        const driver = services.manager.getDriver(chosen.connectionId);
-        TableViewerPanel.show({
-          manager: services.manager,
-          logger: services.logger,
-          ref: { connectionId: chosen.connectionId, database: chosen.database, schema: chosen.schema, table: chosen.table, kind: chosen.kind },
-          engine: driver?.engine,
-          title: `${chosen.database}.${chosen.table}`,
-        });
-      },
-    );
+
+    let items: ExplorerObjectItem[];
+    try {
+      items = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Window, title: 'DataDock: indexing database objects...' },
+        () => explorerObjectItems(connected, tablesOf, (connectionId, error) => {
+          services.logger.warn('Quick open: could not list objects.', {
+            connectionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }),
+      );
+    } catch (error) {
+      services.logger.warn('Quick open: indexing failed.', error);
+      void vscode.window.showErrorMessage('DataDock: could not index database objects. See the DataDock output channel.');
+      return;
+    }
+
+    if (items.length === 0) {
+      void vscode.window.showInformationMessage('No tables or views found on the connected profiles.');
+      return;
+    }
+
+    const pick = vscode.window.createQuickPick<ExplorerQuickPickItem>();
+    pick.title = 'Go to Table or View';
+    pick.placeholder = 'Search across every connected database';
+    pick.matchOnDescription = true;
+    pick.matchOnDetail = true;
+    pick.items = items.slice(0, 200).map((item) => toQuickPickItem(item));
+    pick.activeItems = pick.items.slice(0, 1);
+    const selected = await new Promise<ExplorerQuickPickItem | undefined>((resolve) => {
+      pick.onDidAccept(() => resolve(pick.selectedItems[0]));
+      pick.onDidHide(() => resolve(undefined));
+      pick.show();
+    });
+    if (!selected) {
+      return;
+    }
+    const chosen = selected.item;
+    const driver = services.manager.getDriver(chosen.connectionId);
+    TableViewerPanel.show({
+      manager: services.manager,
+      logger: services.logger,
+      ref: { connectionId: chosen.connectionId, database: chosen.database, schema: chosen.schema, table: chosen.table, kind: chosen.kind },
+      engine: driver?.engine,
+      title: `${chosen.database}.${chosen.table}`,
+    });
   });
 }

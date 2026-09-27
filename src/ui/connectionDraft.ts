@@ -31,6 +31,7 @@ export interface FormDraft {
   readOnly: boolean;
   sslEnabled: boolean;
   sslVerify: boolean;
+  sslServerName: string;
   sslCaFile: string;
   sslCertFile: string;
   sslKeyFile: string;
@@ -89,6 +90,7 @@ export function draftFromProfile(profile: ConnectionProfile): FormDraft {
     readOnly: !!profile.readOnly,
     sslEnabled: !!profile.ssl?.enabled,
     sslVerify: profile.ssl?.verify !== false,
+    sslServerName: text(profile.ssl?.serverName),
     sslCaFile: text(profile.ssl?.caFile),
     sslCertFile: text(profile.ssl?.certFile),
     sslKeyFile: text(profile.ssl?.keyFile),
@@ -146,7 +148,8 @@ export function profileFromDraft(draft: FormDraft, base: ConnectionProfile): Con
   const caFile = draft.sslCaFile.trim();
   const certFile = draft.sslCertFile.trim();
   const keyFile = draft.sslKeyFile.trim();
-  const hasSslValues = draft.sslEnabled || !!caFile || !!certFile || !!keyFile;
+  const serverName = draft.sslServerName.trim();
+  const hasSslValues = draft.sslEnabled || !!caFile || !!certFile || !!keyFile || !!serverName;
 
   const sshHost = draft.sshHost.trim();
   const sshUser = draft.sshUser.trim();
@@ -175,6 +178,8 @@ export function profileFromDraft(draft: FormDraft, base: ConnectionProfile): Con
       ? {
           enabled: draft.sslEnabled,
           verify: draft.sslVerify,
+          // Without its own field the SNI name used to be dropped on every save.
+          serverName: serverName || undefined,
           caFile: caFile || undefined,
           certFile: certFile || undefined,
           keyFile: keyFile || undefined,

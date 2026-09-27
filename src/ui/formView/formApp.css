@@ -1,0 +1,510 @@
+/* DataDock connection form theme.
+ *
+ * Layout principles (DB Explorer / Database Client take, DataDock identity):
+ *  - dense controls on a 4/8/12/16/24 scale, 30px tall, two columns that fold
+ *    to one column in a narrow Editor Group;
+ *  - one step at a time: an engine catalog, then the configuration form;
+ *  - validation next to the field it belongs to, never as one flat block;
+ *  - a feature the backend does not implement is shown as unavailable, with
+ *    its controls disabled instead of a button that pretends to work.
+ *
+ * Tokens come from `../shared/tokens.css`; only form-specific rules live here.
+ * No `@font-face`, no icon font, no `content:` glyph, no `::before`/`::after`
+ * icon, no emoji. The disclosure triangle is a CSS border shape, and the engine
+ * marks are inline SVG supplied by the host.
+ */
+
+@import '../shared/tokens.css';
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--dd-font);
+  font-size: var(--vscode-font-size);
+  color: var(--dd-fg);
+  background-color: var(--dd-bg);
+  padding: 0;
+  margin: 0;
+}
+
+.page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: var(--dd-space-4) var(--dd-space-5) var(--dd-space-5);
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* header ------------------------------------------------------------------ */
+
+.app-header {
+  margin-bottom: var(--dd-space-3);
+}
+
+.app-header h1 {
+  font-size: 1.35em;
+  font-weight: 600;
+  margin: 0 0 var(--dd-space-1);
+}
+
+.app-header .tagline {
+  margin: 0;
+  color: var(--dd-muted);
+  font-size: 0.95em;
+}
+
+/* step 1: engine catalog --------------------------------------------------- */
+
+.catalog {
+  display: grid;
+  /* Reflows against the panel width, not the window width. */
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: var(--dd-space-2);
+  margin: var(--dd-space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.engine-card {
+  display: flex;
+  align-items: center;
+  gap: var(--dd-space-2);
+  width: 100%;
+  min-height: 56px;
+  padding: var(--dd-space-2) var(--dd-space-3);
+  font-family: var(--dd-font);
+  font-size: var(--vscode-font-size);
+  text-align: left;
+  color: var(--dd-fg);
+  background-color: var(--dd-widget-bg);
+  border: 1px solid var(--dd-border);
+  border-radius: var(--dd-radius-lg);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.engine-card:hover:not(:disabled) {
+  background-color: var(--dd-hover);
+  border-color: var(--dd-focus);
+}
+
+.engine-card:focus-visible {
+  outline: 1px solid var(--dd-focus);
+  outline-offset: 1px;
+}
+
+.engine-card:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.engine-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--dd-icon-size);
+  width: var(--dd-icon-size);
+  height: var(--dd-icon-size);
+}
+
+.engine-mark svg {
+  display: block;
+  width: var(--dd-icon-size);
+  height: var(--dd-icon-size);
+}
+
+.engine-text {
+  min-width: 0;
+}
+
+.engine-name {
+  display: block;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.engine-meta {
+  display: block;
+  color: var(--dd-muted);
+  font-size: 0.9em;
+}
+
+.catalog-hint {
+  margin: var(--dd-space-3) 0 0;
+  color: var(--dd-muted);
+}
+
+/* status band -------------------------------------------------------------- */
+
+.panel {
+  border-left: 3px solid transparent;
+  background: var(--vscode-textBlockQuote-background, transparent);
+  padding: var(--dd-space-2) var(--dd-space-3);
+  margin: 0 0 var(--dd-space-3);
+  display: none;
+  line-height: 1.55;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.panel.visible {
+  display: block;
+}
+
+.panel.error {
+  border-left-color: var(--dd-error);
+}
+
+.panel.success {
+  border-left-color: var(--dd-success);
+}
+
+.panel.busy {
+  border-left-color: var(--dd-muted);
+}
+
+.panel__prefix {
+  font-weight: 700;
+  margin-right: var(--dd-space-2);
+}
+
+.panel__text {
+  min-width: 0;
+}
+
+/* engine summary of the chosen step --------------------------------------- */
+
+.engine-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--dd-space-2);
+  flex-wrap: wrap;
+  margin: 0 0 var(--dd-space-3);
+  padding-bottom: var(--dd-space-2);
+  border-bottom: 1px solid var(--dd-border);
+}
+
+.engine-bar .engine-name {
+  font-size: 1.05em;
+}
+
+/* fields -------------------------------------------------------------------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dd-space-1);
+  flex: 1 1 300px;
+  min-width: 220px;
+}
+
+.field.wide {
+  flex: 1 1 100%;
+}
+
+.field.narrow {
+  flex: 0 1 190px;
+  min-width: 170px;
+}
+
+.field-line {
+  display: flex;
+  align-items: center;
+  gap: var(--dd-space-2);
+}
+
+.field-line > label {
+  flex: 0 0 128px;
+  font-weight: 600;
+}
+
+.field.narrow .field-line > label {
+  flex: 0 0 96px;
+}
+
+.field-line > input,
+.field-line > select,
+.field-line > .with-button {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.field-error {
+  margin: 0;
+  padding-left: calc(128px + var(--dd-space-2));
+  color: var(--dd-error);
+  font-size: 0.9em;
+}
+
+.field.narrow .field-error {
+  padding-left: calc(96px + var(--dd-space-2));
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dd-space-2) var(--dd-space-4);
+  margin-bottom: var(--dd-space-2);
+}
+
+.block {
+  margin-bottom: var(--dd-space-3);
+}
+
+.req {
+  color: var(--dd-error);
+}
+
+/* controls ------------------------------------------------------------------ */
+
+input[type='text'],
+input[type='number'],
+input[type='password'],
+select,
+textarea {
+  font-family: var(--dd-font);
+  font-size: var(--vscode-font-size);
+  color: var(--dd-input-fg);
+  background-color: var(--dd-input-bg);
+  border: 1px solid var(--dd-input-border);
+  border-radius: var(--dd-radius);
+  height: var(--dd-control-height);
+  padding: 0 var(--dd-space-2);
+  width: 100%;
+}
+
+textarea {
+  height: auto;
+  min-height: 76px;
+  padding: var(--dd-space-1) var(--dd-space-2);
+  font-family: var(--dd-mono);
+  resize: vertical;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--dd-placeholder);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 1px solid var(--dd-focus);
+  outline-offset: -1px;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+input[type='checkbox'] {
+  accent-color: var(--dd-primary);
+  width: auto;
+}
+
+.with-button {
+  display: flex;
+  gap: var(--dd-space-1);
+  align-items: stretch;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--dd-space-2);
+  margin-bottom: var(--dd-space-1);
+}
+
+.check label {
+  font-weight: normal;
+  margin: 0;
+}
+
+.hint {
+  color: var(--dd-muted);
+  font-size: 0.92em;
+  margin: 0;
+}
+
+.secret-state {
+  color: var(--dd-muted);
+  font-size: 0.92em;
+  min-height: 1.2em;
+  margin: 0;
+}
+
+/* feature the backend does not implement ------------------------------------- */
+
+fieldset {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.notice {
+  margin: 0 0 var(--dd-space-2);
+  padding: var(--dd-space-2) var(--dd-space-3);
+  border-left: 3px solid var(--dd-warning);
+  background: var(--vscode-textBlockQuote-background, transparent);
+  color: var(--dd-fg);
+}
+
+.notice strong {
+  font-weight: 600;
+}
+
+/* advanced sections, collapsed by default -------------------------------------- */
+
+details.section {
+  border-top: 1px solid var(--dd-border);
+  padding: var(--dd-space-2) 0 var(--dd-space-1);
+  margin-bottom: var(--dd-space-2);
+}
+
+details.section summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--dd-space-2);
+  user-select: none;
+  min-height: var(--dd-control-height);
+}
+
+details.section summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Disclosure triangle drawn from borders, not from a glyph. */
+details.section summary::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 5px solid var(--dd-muted);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 120ms ease;
+  flex: 0 0 auto;
+}
+
+details.section[open] summary::before {
+  transform: rotate(90deg);
+}
+
+details.section summary:hover {
+  color: var(--vscode-panelTitle-activeForeground, var(--dd-fg));
+}
+
+details.section .section-body {
+  padding: var(--dd-space-2) 0 var(--dd-space-1);
+}
+
+details.section summary .section-state {
+  font-weight: normal;
+  color: var(--dd-muted);
+  font-size: 0.9em;
+}
+
+/* actions --------------------------------------------------------------------- */
+
+.actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dd-space-2);
+  padding: var(--dd-space-3) 0 var(--dd-space-2);
+  margin-top: var(--dd-space-3);
+  background-color: var(--dd-bg);
+  border-top: 1px solid var(--dd-border);
+}
+
+button {
+  font-family: var(--dd-font);
+  font-size: var(--vscode-font-size);
+  color: var(--dd-primary-fg);
+  background-color: var(--dd-primary);
+  border: 1px solid transparent;
+  border-radius: var(--dd-radius);
+  min-height: var(--dd-control-height);
+  padding: 0 var(--dd-space-4);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background-color: var(--dd-primary-hover);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.secondary {
+  font-weight: normal;
+  color: var(--dd-secondary-fg);
+  background-color: var(--dd-secondary);
+  border-color: var(--dd-border);
+}
+
+button.secondary:hover:not(:disabled) {
+  background-color: var(--dd-secondary-hover);
+}
+
+button.link {
+  min-height: auto;
+  padding: 0;
+  color: var(--vscode-textLink-foreground, var(--dd-primary-fg));
+  background: transparent;
+  font-weight: normal;
+  text-decoration: underline;
+}
+
+button.link:hover:not(:disabled) {
+  background: transparent;
+  color: var(--vscode-textLink-activeForeground, var(--dd-primary-fg));
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+/* narrow Editor Group: one column --------------------------------------------- */
+
+@media (max-width: 700px) {
+  .page {
+    padding: var(--dd-space-3) var(--dd-space-4) var(--dd-space-4);
+  }
+
+  .field,
+  .field.narrow {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .field-line > label,
+  .field.narrow .field-line > label {
+    flex: 0 0 108px;
+  }
+
+  .field-error,
+  .field.narrow .field-error {
+    padding-left: calc(108px + var(--dd-space-2));
+  }
+
+  .actions {
+    justify-content: flex-end;
+  }
+}

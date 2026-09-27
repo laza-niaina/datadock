@@ -36,6 +36,7 @@ import {
 } from '../sql/queryHistory';
 import { sqlFileAssociations, type SqlFileAssociation } from '../sql/sqlFileState';
 import { splitSqlStatements, statementAtOffset, type SqlStatement } from '../sql/sqlStatements';
+import { selectStatementFor } from '../sql/queryTemplate';
 import { QueryResultPanel, type QueryStatementDisplay } from '../ui/queryResultPanel';
 import { TableViewerPanel } from '../ui/tableViewerPanel';
 import { globalRedactor } from '../util/redaction';
@@ -108,11 +109,13 @@ async function pickProfile(services: CommandServices, title: string): Promise<Co
   }
   const picked = await vscode.window.showQuickPick(
     profiles.map((profile) => ({
-      label: profile.name,
-      description: profile.host ? `${profile.engine} · ${profile.host}` : profile.engine,
+      // Native codicon in the label and the engine/host in the description, so
+      // the list stays scannable and the picker filters on the description too.
+      label: `$(server) ${profile.name}`,
+      description: profile.host ? `${engineLabel(profile.engine)} · ${profile.host}` : engineLabel(profile.engine),
       profile,
     })),
-    { title, placeHolder: 'Connection' },
+    { title, placeHolder: 'Connection', matchOnDescription: true },
   );
   return picked?.profile;
 }
@@ -157,7 +160,7 @@ async function ensureRunDatabase(
     return { aborted: true, override: undefined };
   }
   const picked = await vscode.window.showQuickPick(
-    databases.map((database) => ({ label: database, database })),
+    databases.map((database) => ({ label: `$(database) ${database}`, database })),
     {
       title: 'DataDock: database for this SQL file',
       placeHolder: 'This connection has no default database. Pick one to run against.',
@@ -283,10 +286,13 @@ async function pickAndSetDatabase(
   const current = association.database ?? profile.database;
   const picked = await vscode.window.showQuickPick(
     databases.map((database) => ({
-      label: database === current ? `${database} (current)` : database,
+      // The active database is marked in the description, not glued to the
+      // label, so the visible name stays the name the server reports.
+      label: `$(database) ${database}`,
+      description: database === current ? 'current' : undefined,
       database,
     })),
-    { title: 'DataDock: database for this SQL file', placeHolder: 'Database' },
+    { title: 'DataDock: database for this SQL file', placeHolder: 'Database', matchOnDescription: true },
   );
   if (!picked) {
     return;
@@ -512,19 +518,34 @@ async function loadHistoryIntoEditor(sql: string): Promise<void> {
   }
 }
 
-/** One QuickPick row: a recorded statement or the clear action. */
+/** One QuickPick row: a recorded statement, or a panel action. */
 interface HistoryPick extends vscode.QuickPickItem {
-  readonly action: 'entry' | 'clear';
+  readonly action: 'entry' | 'clear' | 'toggle';
   readonly entry?: QueryHistoryEntry;
 }
 
-/** Clear action first, then every entry newest first (DBCode history list). */
+/**
+ * Two panel actions, then every entry newest first (DBCode history list).
+ *
+ * The recording toggle is listed here so the retention policy is discoverable
+ * where the history is read, instead of only in the command palette. The policy
+ * itself (500 entries, recording on by default) is unchanged.
+ */
 function historyItems(state: QueryHistoryState): HistoryPick[] {
-  const clear: HistoryPick = {
-    label: '$(clear-all) Clear History',
-    description: `${state.entries.length} recorded`,
-    action: 'clear',
-  };
+  const actions: HistoryPick[] = [
+    {
+      label: '$(clear-all) Clear History',
+      description: `${state.entries.length} recorded`,
+      action: 'clear',
+    },
+    {
+      label: state.enabled ? '$(record) Stop Recording Queries' : '$(circle-slash) Start Recording Queries',
+      description: state.enabled
+        ? 'Recording is on: every executed statement is stored in this workspace'
+        : 'Recording is off: nothing new is stored',
+      action: 'toggle',
+    },
+  ];
   const entries: HistoryPick[] = state.entries.map((entry) => ({
     label: `${entry.status === 'error' ? '$(error)' : '$(database)'} ${historyEntryLabel(entry)}`,
     description: `${entry.connectionName}${entry.database ? ` : ${entry.database}` : ''}`,
@@ -539,7 +560,7 @@ function historyItems(state: QueryHistoryState): HistoryPick[] {
       { iconPath: new vscode.ThemeIcon('trash'), tooltip: 'Delete from history' },
     ],
   }));
-  return [clear, ...entries];
+  return [...actions, ...entries];
 }
 
 /**
@@ -614,6 +635,13 @@ async function showHistoryPicker(
           await persist();
           refresh();
         }
+        return;
+      }
+      if (selected.action === 'toggle') {
+        // The policy is unchanged, only made reachable from where it is read.
+        state = setHistoryEnabled(state, !state.enabled);
+        await persist();
+        refresh();
         return;
       }
       if (selected.entry) {
@@ -882,11 +910,18 @@ export function registerQueryCommands(register: Register, services: CommandServi
     const currentId = connectionIdOf(uriOrNode) ?? state.get(activeUri);
     const picked = await vscode.window.showQuickPick(
       profiles.map((profile) => ({
-        label: profile.id === currentId ? `${profile.name} (current)` : profile.name,
-        description: profile.host ? `${profile.engine} · ${profile.host}` : profile.engine,
+        label: `$(server) ${profile.name}`,
+        description:
+          profile.host ? `${engineLabel(profile.engine)} · ${profile.host}` : engineLabel(profile.engine),
+        detail: profile.id === currentId ? 'current connection for this file' : undefined,
         profile,
       })),
-      { title: 'DataDock: connection for this SQL file', placeHolder: 'Connection (remembered for this file)' },
+      {
+        title: 'DataDock: connection for this SQL file',
+        placeHolder: 'Connection (remembered for this file)',
+        matchOnDescription: true,
+        matchOnDetail: true,
+      },
     );
     if (!picked) {
       return;
@@ -910,6 +945,39 @@ export function registerQueryCommands(register: Register, services: CommandServi
       engine: services.manager.getDriver(node.ref.connectionId)?.engine,
       title: `${node.ref.database}.${node.ref.table}`,
     });
+  });
+
+  /**
+   * Opens a prefilled read-only scaffold for a table node ("Open Query" in DB
+   * Explorer). The generated text is a plain `SELECT`: no `USE`, no `LIMIT`, so
+   * the executed statement is exactly what the editor shows. The new file
+   * inherits the node's context, which is what makes it runnable right away.
+   */
+  register('dbclient.query.openForNode', async (node?: unknown) => {
+    if (!(node instanceof RelationNode)) {
+      void vscode.window.showInformationMessage('Select a table or view in DataDock to open a query for it.');
+      return;
+    }
+    const profile = await services.store.get(node.ref.connectionId);
+    const engine = services.manager.getDriver(node.ref.connectionId)?.engine ?? profile?.engine;
+    if (!engine) {
+      void vscode.window.showInformationMessage('The connection of this table is no longer available.');
+      return;
+    }
+
+    const content = selectStatementFor(
+      { table: node.ref.table, schema: node.ref.schema, database: node.ref.database },
+      engine,
+    );
+    const document = await vscode.workspace.openTextDocument({ language: 'sql', content });
+    await vscode.window.showTextDocument(document, { preview: false });
+
+    // SQLite resolves its database from the file, so it never gets an override.
+    sqlFileAssociations().set(
+      document.uri,
+      node.ref.connectionId,
+      engine === 'sqlite' ? undefined : node.ref.database,
+    );
   });
 
   /**

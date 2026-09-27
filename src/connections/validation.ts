@@ -16,6 +16,15 @@ const SSH_AUTH_METHODS: readonly SshAuthMethod[] = ['password', 'privateKey', 'a
 /** Key used inside `profile.options` for file-based engines. */
 export const FILE_PATH_OPTION = 'filePath';
 
+/**
+ * Problems keyed by the `data-draft` field they belong to, so the form can put
+ * the message next to the input instead of in one flat block. Keys match the
+ * draft field names exactly; anything not expressible as a field (a missing
+ * driver, for instance) uses its own key and is also listed by
+ * `validateProfile`.
+ */
+export type ProfileFieldErrors = Partial<Record<string, string>>;
+
 function isBlank(value: unknown): boolean {
   return typeof value !== 'string' || value.trim().length === 0;
 }
@@ -35,65 +44,78 @@ function portProblem(value: unknown, label: string): string | undefined {
 }
 
 /**
- * Returns a list of human-readable problems. An empty array means the profile
- * is well formed; it does not mean the server will accept it.
+ * The same checks as `validateProfile`, keyed by field.
+ * An empty result means the profile is well formed; it does not mean the
+ * server will accept it.
  */
-export function validateProfile(profile: ConnectionProfile, factory?: DriverFactory): string[] {
-  const problems: string[] = [];
+export function validateProfileFields(
+  profile: ConnectionProfile,
+  factory?: DriverFactory,
+): ProfileFieldErrors {
+  const errors: ProfileFieldErrors = {};
 
   if (isBlank(profile.name)) {
-    problems.push('A connection name is required.');
+    errors.name = 'A connection name is required.';
   } else if (profile.name.trim().length > MAX_PROFILE_NAME) {
-    problems.push(`The connection name must be at most ${MAX_PROFILE_NAME} characters.`);
+    errors.name = `The connection name must be at most ${MAX_PROFILE_NAME} characters.`;
   }
 
   if (isBlank(profile.engine)) {
-    problems.push('A database engine is required.');
+    errors.engine = 'A database engine is required.';
   } else if (!factory) {
-    problems.push(`No driver is installed for engine '${profile.engine}'.`);
+    errors.engine = `No driver is installed for engine '${profile.engine}'.`;
   }
 
   if (factory?.fileBased) {
-    const filePath = profile.options?.[FILE_PATH_OPTION];
-    if (isBlank(filePath)) {
-      problems.push('A database file path is required for this engine.');
+    if (isBlank(profile.options?.[FILE_PATH_OPTION])) {
+      errors.filePath = 'A database file path is required for this engine.';
     }
   } else if (factory) {
     if (isBlank(profile.host)) {
-      problems.push('A host is required.');
+      errors.host = 'A host is required.';
     }
     const hostPort = portProblem(profile.port, 'The port');
     if (hostPort) {
-      problems.push(hostPort);
+      errors.port = hostPort;
     }
   }
 
   if (profile.ssh?.enabled) {
     const ssh = profile.ssh;
     if (isBlank(ssh.host)) {
-      problems.push('An SSH host is required when the tunnel is enabled.');
+      errors.sshHost = 'An SSH host is required when the tunnel is enabled.';
     }
     if (isBlank(ssh.username)) {
-      problems.push('An SSH username is required when the tunnel is enabled.');
+      errors.sshUser = 'An SSH username is required when the tunnel is enabled.';
     }
     const sshPort = portProblem(ssh.port, 'The SSH port');
     if (sshPort) {
-      problems.push(sshPort);
+      errors.sshPort = sshPort;
     }
     if (ssh.authMethod !== undefined && !SSH_AUTH_METHODS.includes(ssh.authMethod)) {
-      problems.push(`Unsupported SSH authentication method '${ssh.authMethod}'.`);
+      errors.sshAuthMethod = `Unsupported SSH authentication method '${ssh.authMethod}'.`;
     }
     const remotePort = portProblem(ssh.remotePort, 'The SSH remote port');
     if (remotePort) {
-      problems.push(remotePort);
+      errors.sshRemotePort = remotePort;
     }
   }
 
   if (profile.readOnly !== undefined && typeof profile.readOnly !== 'boolean') {
-    problems.push('The read-only flag must be a boolean.');
+    errors.readOnly = 'The read-only flag must be a boolean.';
   }
 
-  return problems;
+  return errors;
+}
+
+/**
+ * Returns a list of human-readable problems. An empty array means the profile
+ * is well formed; it does not mean the server will accept it.
+ */
+export function validateProfile(profile: ConnectionProfile, factory?: DriverFactory): string[] {
+  return Object.values(validateProfileFields(profile, factory)).filter(
+    (message): message is string => message !== undefined,
+  );
 }
 
 /**

@@ -1,0 +1,71 @@
+/* DataDock shared design tokens.
+ *
+ * One source of truth for every DataDock webview (connection form, result
+ * view). Both stylesheets `@import` this file, so a colour, a spacing step or
+ * a control height is defined once and cannot drift between screens.
+ *
+ * Rules honoured by every consumer:
+ *  - colours come from `--vscode-*` theme variables only, so light, dark and
+ *    high-contrast themes all work with no hard-coded palette;
+ *  - no `@font-face`, no icon font, no `content:` glyph, no `::before` /
+ *    `::after` icon, no emoji: marks are SVG or plain CSS shapes;
+ *  - spacing follows the 4 / 8 / 12 / 16 / 24 scale, controls sit at 30px and
+ *    grid rows at 32px (28px in compact density);
+ *  - selection, keyboard focus, error and read-only are distinguishable
+ *    without relying on colour alone.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* typography ---------------------------------------------------------- */
+  --dd-font: var(--vscode-font-family);
+  --dd-mono: var(--vscode-editor-font-family, var(--vscode-font-family));
+  --dd-fg: var(--vscode-foreground);
+  --dd-muted: var(--vscode-descriptionForeground);
+  --dd-bg: var(--vscode-editor-background);
+  --dd-widget-bg: var(--vscode-editorWidget-background);
+  /* Zebra + header tone: `editorWidget-background` lifts one subtle step above
+     the editor surface in BOTH themes (`input-background` is white in light
+     themes, which would make stripes invisible on a white editor). */
+  --dd-stripe: var(--vscode-editorWidget-background);
+
+  /* lines and states ---------------------------------------------------- */
+  --dd-border: var(--vscode-panel-border, var(--vscode-widget-border));
+  --dd-focus: var(--vscode-focusBorder, var(--vscode-tab-activeForeground));
+  --dd-hover: var(--vscode-list-hoverBackground, var(--vscode-tab-hoverBackground));
+  --dd-selected: var(--vscode-list-activeSelectionBackground);
+  --dd-selected-fg: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+  --dd-error: var(--vscode-errorForeground, var(--vscode-inputValidation-errorBorder));
+  --dd-warning: var(--vscode-editorWarning-foreground, var(--vscode-foreground));
+  --dd-success: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+  --dd-green: var(--vscode-charts-green);
+  --dd-red: var(--vscode-errorForeground);
+
+  /* inputs and buttons -------------------------------------------------- */
+  --dd-input-bg: var(--vscode-input-background);
+  --dd-input-fg: var(--vscode-input-foreground);
+  --dd-input-border: var(--vscode-input-border, var(--vscode-input-background));
+  --dd-placeholder: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+  --dd-primary: var(--vscode-button-background);
+  --dd-primary-fg: var(--vscode-button-foreground);
+  --dd-primary-hover: var(--vscode-button-hoverBackground);
+  --dd-secondary: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
+  --dd-secondary-fg: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
+  --dd-secondary-hover: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground));
+
+  /* spacing scale (4 / 8 / 12 / 16 / 24) --------------------------------- */
+  --dd-space-1: 4px;
+  --dd-space-2: 8px;
+  --dd-space-3: 12px;
+  --dd-space-4: 16px;
+  --dd-space-5: 24px;
+
+  /* metrics -------------------------------------------------------------- */
+  --dd-radius: 2px;
+  --dd-radius-lg: 4px;
+  --dd-control-height: 30px;
+  --dd-row-height: 32px;
+  --dd-row-height-compact: 28px;
+  --dd-icon-size: 16px;
+}

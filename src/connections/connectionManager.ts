@@ -181,6 +181,18 @@ export class ConnectionManager {
     }
   }
 
+  /**
+   * Whether an SSH transport is available in this build.
+   *
+   * The connection form reads this to disable the tunnel controls instead of
+   * offering an option that can only fail at connect time. `resolveTunnel`
+   * remains the single enforcement point: an unsupported tunnel never opens a
+   * clear-text socket.
+   */
+  get supportsSshTunnel(): boolean {
+    return this.options.openTunnel !== undefined;
+  }
+
   private async openSession(
     session: Session,
     config: ConnectionConfig,
