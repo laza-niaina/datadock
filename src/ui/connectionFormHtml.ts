@@ -2,10 +2,8 @@
  * HTML for the connection form webview.
  *
  * Design basis (DataDock identity, DB Explorer / Database Client interaction):
- *  - **Two steps in one panel**: an engine catalog with the real engine marks,
- *    then the configuration form. The catalog only offers engines the driver
- *    registry actually reports as available, so nothing can be picked that
- *    cannot be opened.
+ *  - **Database type first**, as an underline tab strip with the real engine
+ *    marks, then the settings of the selected engine.
  *  - **Dense form, roomy layout**: controls are 30px on a 4/8/12/16/24 scale,
  *    two label-left columns that fold to one in a narrow Editor Group.
  *  - **Validation next to the field** it belongs to, plus one status band that
@@ -41,30 +39,21 @@ export interface ConnectionFormAssets {
 const FORM_BODY = `
 <div class="page">
   <div class="app-header">
-    <h1 id="form-title">Add a database connection</h1>
+    <h1 id="form-title">Connect to Database Server</h1>
     <p class="tagline">DataDock - free database tooling. No account, no telemetry, no connection limit.</p>
   </div>
 
-  <section id="step-catalog" aria-label="Database engine">
-    <ul class="catalog" id="engine-catalog"></ul>
-    <p class="catalog-hint">Only the engines above are installed in this build. Everything runs on your machine and every connection is free.</p>
-  </section>
+  <blockquote class="panel" id="status" aria-live="polite"></blockquote>
 
-  <section id="step-form" class="hidden" aria-label="Connection settings">
-    <blockquote class="panel" id="status" aria-live="polite"></blockquote>
-
-    <div class="engine-bar">
-      <span class="engine-mark" id="chosen-mark"></span>
-      <span class="engine-name" id="chosen-name"></span>
-      <span class="spacer"></span>
-      <button type="button" class="link" data-action="change-engine">Change engine</button>
+  <div class="block">
+    <div class="field-label">Database Type</div>
+    <ul class="tab-strip" id="engine-tabs" role="group" aria-label="Database Type"></ul>
+    <div class="hidden" aria-hidden="true">
+      <select id="f-engine" data-draft="engine"></select>
     </div>
+  </div>
 
-    <form id="connection-form" autocomplete="off" novalidate>
-      <div class="hidden" aria-hidden="true">
-        <select id="f-engine" data-draft="engine"></select>
-      </div>
-
+  <form id="connection-form" autocomplete="off" novalidate">
       <div class="block">
         <div class="row">
           <div class="field">
@@ -354,7 +343,6 @@ const FORM_BODY = `
         <button type="button" data-action="connect" id="connect-button">Connect</button>
       </div>
     </form>
-  </section>
 </div>
 `;
 
@@ -393,12 +381,6 @@ const SCRIPT_PART_ONE = `
     return engine.label + (engine.status === 'beta' ? ' (beta)' : '');
   }
 
-  function engineMeta(engine) {
-    if (engine.fileBased) { return 'local file'; }
-    if (engine.defaultPort) { return 'default port ' + engine.defaultPort; }
-    return 'server connection';
-  }
-
   function readDraft() {
     var draft = {};
     var nodes = form.querySelectorAll('[data-draft]');
@@ -421,50 +403,48 @@ const SCRIPT_PART_ONE = `
     }
   }
 
-  // Step 1: one compact card per engine the registry reports as available.
-  function renderCatalog() {
-    var host = byId('engine-catalog');
+  // Database type as an underline tab strip: one tab per engine the registry
+  // reports as available, with its real mark.
+  function renderEngineOptions() {
+    var select = field('engine');
+    select.textContent = '';
+    var host = byId('engine-tabs');
     host.textContent = '';
     for (var i = 0; i < engines.length; i++) {
       var engine = engines[i];
-      var item = document.createElement('li');
-      var card = document.createElement('button');
-      card.type = 'button';
-      card.className = 'engine-card';
-      card.setAttribute('data-engine', engine.id);
+      var option = document.createElement('option');
+      option.value = engine.id;
+      option.textContent = engineLabel(engine);
+      select.appendChild(option);
+      var tab = document.createElement('li');
+      tab.className = 'tab';
+      tab.setAttribute('data-engine', engine.id);
+      tab.setAttribute('role', 'button');
+      tab.setAttribute('tabindex', '0');
+      tab.setAttribute('aria-pressed', 'false');
       var mark = document.createElement('span');
       mark.className = 'engine-mark';
       // The mark is a host-provided inline SVG; the CSP forbids remote images,
       // so it is injected as markup rather than referenced.
       mark.innerHTML = engine.logo || '';
-      var text = document.createElement('span');
-      text.className = 'engine-text';
       var name = document.createElement('span');
       name.className = 'engine-name';
       name.textContent = engineLabel(engine);
-      var meta = document.createElement('span');
-      meta.className = 'engine-meta';
-      meta.textContent = engineMeta(engine);
-      text.appendChild(name);
-      text.appendChild(meta);
-      card.appendChild(mark);
-      card.appendChild(text);
-      item.appendChild(card);
-      host.appendChild(item);
+      tab.appendChild(mark);
+      tab.appendChild(name);
+      host.appendChild(tab);
     }
+    syncTabs();
   }
 
-  function renderChosenEngine() {
-    var engine = engineById(field('engine').value);
-    var mark = byId('chosen-mark');
-    var name = byId('chosen-name');
-    if (mark) { mark.innerHTML = engine ? engine.logo || '' : ''; }
-    if (name) { name.textContent = engine ? engineLabel(engine) : ''; }
-  }
-
-  function showStep(step) {
-    toggleHidden('step-catalog', step !== 'catalog');
-    toggleHidden('step-form', step !== 'form');
+  function syncTabs() {
+    var current = field('engine').value;
+    var tabs = byId('engine-tabs').querySelectorAll('[data-engine]');
+    for (var i = 0; i < tabs.length; i++) {
+      var active = tabs[i].getAttribute('data-engine') === current;
+      if (active) { tabs[i].classList.add('active'); } else { tabs[i].classList.remove('active'); }
+      tabs[i].setAttribute('aria-pressed', active ? 'true' : 'false');
+    }
   }
 
   // Keeps the host-generated default name in sync with the engine, but only
@@ -482,8 +462,8 @@ const SCRIPT_PART_ONE = `
     var engine = engineById(id);
     if (!engine) { return; }
     field('engine').value = id;
+    syncTabs();
     syncAutoName(engine);
-    renderChosenEngine();
     applyEngine();
     applyToggles();
     setFieldErrors({});
@@ -633,15 +613,17 @@ const SCRIPT_PART_THREE = `
     if (action === 'connect') { api.postMessage({ type: 'saveAndConnect', draft: readDraft() }); return; }
     if (action === 'test') { api.postMessage({ type: 'test', draft: readDraft() }); return; }
     if (action === 'cancel') { api.postMessage({ type: 'cancel' }); return; }
-    if (action === 'change-engine') { setFieldErrors({}); showStep('catalog'); return; }
+    var tab = event.target.closest ? event.target.closest('[data-engine]') : undefined;
+    if (tab) { selectEngine(tab.getAttribute('data-engine')); }
   });
 
-  byId('engine-catalog').addEventListener('click', function (event) {
-    var card = event.target.closest ? event.target.closest('[data-engine]') : undefined;
-    if (!card) { return; }
-    selectEngine(card.getAttribute('data-engine'));
-    showStep('form');
-    field('name').focus();
+  // The tab strip is a list of buttons, so Enter and Space must select it too.
+  byId('engine-tabs').addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') { return; }
+    var tab = event.target.closest ? event.target.closest('[data-engine]') : undefined;
+    if (!tab) { return; }
+    event.preventDefault();
+    selectEngine(tab.getAttribute('data-engine'));
   });
 
   form.addEventListener('keydown', function (event) {
@@ -658,7 +640,7 @@ const SCRIPT_PART_THREE = `
     var target = event.target;
     if (!target || !target.getAttribute) { return; }
     var key = target.getAttribute('data-draft');
-    if (key === 'engine') { renderChosenEngine(); applyEngine(); }
+    if (key === 'engine') { syncTabs(); applyEngine(); }
     if (key === 'sslEnabled' || key === 'sshEnabled' || key === 'sshAuthMethod') { applyToggles(); }
   });
 
@@ -684,20 +666,11 @@ const SCRIPT_PART_THREE = `
       mode = message.mode;
       sshSupported = message.sshSupported === true;
       var title = byId('form-title');
-      if (title) { title.textContent = mode === 'create' ? 'Add a database connection' : 'Edit connection'; }
+      if (title) { title.textContent = mode === 'create' ? 'Connect to Database Server' : 'Edit Connection'; }
       engines = message.engines || [];
-      var select = field('engine');
-      select.textContent = '';
-      for (var i = 0; i < engines.length; i++) {
-        var option = document.createElement('option');
-        option.value = engines[i].id;
-        option.textContent = engineLabel(engines[i]);
-        select.appendChild(option);
-      }
-      renderCatalog();
+      renderEngineOptions();
       writeDraft(message.draft || {});
       autoName = field('name').value;
-      renderChosenEngine();
       applyEngine();
       applyToggles();
       applyPresence(message.secretPresence);
@@ -705,10 +678,7 @@ const SCRIPT_PART_THREE = `
       if (message.statusKind && message.statusMessage) {
         setStatus(message.statusKind, message.statusMessage);
       }
-      // Editing an existing connection starts on its settings; creating starts
-      // on the catalog, which is where the engine choice belongs.
-      showStep(mode === 'create' ? 'catalog' : 'form');
-      if (mode === 'edit') { field('name').focus(); }
+      field('name').focus();
       return;
     }
     if (message.type === 'busy') { setBusy(!!message.busy, message.label); return; }
@@ -733,7 +703,7 @@ const SCRIPT_PART_THREE = `
 export interface EngineChoice {
   id: string;
   label: string;
-  /** Inline SVG brand mark shown on the catalog card and the engine bar. */
+  /** Inline SVG brand mark shown on the engine tab. */
   logo: string;
   status: string;
   defaultPort?: number;

@@ -42,13 +42,15 @@ export interface SqlBlockLensOptions {
 }
 
 /**
- * Builds the lens bar of a SQL document.
+ * Builds the four lenses shown above each SQL block:
+ *  - Run all queries (whole document),
+ *  - Run selected query (this block only),
+ *  - connection (opens the connection picker; "Connect" when none),
+ *  - engine + active database (opens the database picker).
  *
- *  - **Per block**: "Run selected query" runs exactly that statement, from the
- *    same offsets `Ctrl+Enter` resolves through the shared splitter.
- *  - **Per document** (first block only): "Run all queries", the connection and
- *    the engine + active database. Repeating them above every statement filled
- *    the editor with identical buttons, so they are emitted once.
+ * The set is repeated on purpose above every statement: each row then carries
+ * the whole action bar, and a document-scoped-only lens left the user scrolling
+ * to the first statement to run the file.
  *
  * The engine/database lens is only meaningful once a connection exists.
  */
@@ -63,37 +65,35 @@ export function buildBlockLensDescriptors(
     database: info.database,
   });
   const descriptors: SqlBlockLensDescriptor[] = [];
-  blocks.forEach((block, index) => {
-    if (index === 0) {
-      descriptors.push(
-        {
-          line: block.line,
-          title: '$(run-all) Run all queries',
-          command: 'dbclient.query.runAll',
-          arguments: [],
-        },
-        {
-          line: block.line,
-          title: labels.connection,
-          command: 'dbclient.query.selectConnection',
-          arguments: [options.uri],
-        },
-      );
-      if (labels.database) {
-        descriptors.push({
-          line: block.line,
-          title: labels.database,
-          command: 'dbclient.query.selectDatabase',
-          arguments: [options.uri],
-        });
-      }
+  for (const block of blocks) {
+    descriptors.push(
+      {
+        line: block.line,
+        title: '$(run-all) Run all queries',
+        command: 'dbclient.query.runAll',
+        arguments: [],
+      },
+      {
+        line: block.line,
+        title: '$(play) Run selected query',
+        command: 'dbclient.query.runStatement',
+        arguments: [options.uri, block.start, block.end],
+      },
+      {
+        line: block.line,
+        title: labels.connection,
+        command: 'dbclient.query.selectConnection',
+        arguments: [options.uri],
+      },
+    );
+    if (labels.database) {
+      descriptors.push({
+        line: block.line,
+        title: labels.database,
+        command: 'dbclient.query.selectDatabase',
+        arguments: [options.uri],
+      });
     }
-    descriptors.push({
-      line: block.line,
-      title: '$(play) Run selected query',
-      command: 'dbclient.query.runStatement',
-      arguments: [options.uri, block.start, block.end],
-    });
-  });
+  }
   return descriptors;
 }

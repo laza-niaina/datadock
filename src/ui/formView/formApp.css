@@ -57,49 +57,62 @@ body {
   font-size: 0.95em;
 }
 
-/* step 1: engine catalog --------------------------------------------------- */
+/* database type: underline tab strip ----------------------------------------- */
 
-.catalog {
-  display: grid;
-  /* Reflows against the panel width, not the window width. */
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-  gap: var(--dd-space-2);
-  margin: var(--dd-space-3) 0 0;
-  padding: 0;
-  list-style: none;
+.field-label {
+  font-weight: 600;
+  margin: 0 0 var(--dd-space-2);
 }
 
-.engine-card {
+.tab-strip {
   display: flex;
+  flex-wrap: wrap;
+  list-style: none;
+  margin: 0 0 var(--dd-space-3);
+  padding: 0;
+  border-bottom: 1px solid var(--vscode-dropdown-border, var(--dd-border));
+}
+
+.tab {
+  display: inline-flex;
   align-items: center;
-  gap: var(--dd-space-2);
-  width: 100%;
-  min-height: 56px;
-  padding: var(--dd-space-2) var(--dd-space-3);
+  gap: 7px;
   font-family: var(--dd-font);
-  font-size: var(--vscode-font-size);
-  text-align: left;
+  font-size: 13px;
   color: var(--dd-fg);
-  background-color: var(--dd-widget-bg);
-  border: 1px solid var(--dd-border);
-  border-radius: var(--dd-radius-lg);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  margin-bottom: -1px;
+  padding: 7px 12px;
   cursor: pointer;
-  transition: background-color 120ms ease, border-color 120ms ease;
+  user-select: none;
+  transition: background-color 120ms ease, color 120ms ease;
 }
 
-.engine-card:hover:not(:disabled) {
+/* Temporary feedback only: the mouse leaving must not change selection. */
+.tab:hover:not(.active) {
+  color: var(--vscode-panelTitle-activeForeground, var(--dd-fg));
   background-color: var(--dd-hover);
-  border-color: var(--dd-focus);
 }
 
-.engine-card:focus-visible {
+.tab:focus-visible {
   outline: 1px solid var(--dd-focus);
-  outline-offset: 1px;
+  outline-offset: -1px;
 }
 
-.engine-card:disabled {
-  cursor: default;
-  opacity: 0.6;
+/* Selected engine: filled pill + 2px underline drawn with an inset shadow, so
+   nothing shifts. It stays selected after the pointer leaves and while hovered. */
+.tab.active {
+  color: var(--vscode-panelTitle-activeForeground, var(--dd-fg));
+  background-color: var(--vscode-list-activeSelectionBackground, var(--dd-hover));
+  box-shadow: inset 0 -2px 0
+    var(--vscode-panelTitle-activeForeground, var(--dd-focus));
+  font-weight: 600;
+}
+
+.tab.active:hover {
+  background-color: var(--vscode-list-activeSelectionBackground, var(--dd-hover));
 }
 
 .engine-mark {
@@ -109,35 +122,25 @@ body {
   flex: 0 0 var(--dd-icon-size);
   width: var(--dd-icon-size);
   height: var(--dd-icon-size);
+  /* No white plate: the engine marks carry their own colours. */
+  background: transparent;
+  border-radius: var(--dd-radius);
+  box-shadow: inset 0 0 0 1px var(--dd-border);
 }
 
 .engine-mark svg {
   display: block;
-  width: var(--dd-icon-size);
-  height: var(--dd-icon-size);
+  width: 13px;
+  height: 13px;
 }
 
-.engine-text {
-  min-width: 0;
+.tab.active .engine-mark {
+  box-shadow: inset 0 0 0 1.5px
+    var(--vscode-contrastActiveBorder, var(--dd-focus));
 }
 
 .engine-name {
-  display: block;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.engine-meta {
-  display: block;
-  color: var(--dd-muted);
-  font-size: 0.9em;
-}
-
-.catalog-hint {
-  margin: var(--dd-space-3) 0 0;
-  color: var(--dd-muted);
 }
 
 /* status band -------------------------------------------------------------- */
@@ -178,20 +181,8 @@ body {
   min-width: 0;
 }
 
-/* engine summary of the chosen step --------------------------------------- */
-
-.engine-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--dd-space-2);
-  flex-wrap: wrap;
-  margin: 0 0 var(--dd-space-3);
-  padding-bottom: var(--dd-space-2);
-  border-bottom: 1px solid var(--dd-border);
-}
-
-.engine-bar .engine-name {
-  font-size: 1.05em;
+.hidden {
+  display: none !important;
 }
 
 /* fields -------------------------------------------------------------------- */
@@ -461,20 +452,6 @@ button.secondary {
 
 button.secondary:hover:not(:disabled) {
   background-color: var(--dd-secondary-hover);
-}
-
-button.link {
-  min-height: auto;
-  padding: 0;
-  color: var(--vscode-textLink-foreground, var(--dd-primary-fg));
-  background: transparent;
-  font-weight: normal;
-  text-decoration: underline;
-}
-
-button.link:hover:not(:disabled) {
-  background: transparent;
-  color: var(--vscode-textLink-activeForeground, var(--dd-primary-fg));
 }
 
 .spacer {

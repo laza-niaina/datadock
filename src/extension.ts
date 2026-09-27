@@ -202,34 +202,12 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
-  // Block boundaries move while the user types, and a lens captured before an
-  // edit would run the wrong range. The provider is re-queried after a short
-  // idle period so typing does not re-render the lens bar on every keystroke.
-  let lensRefreshTimer: ReturnType<typeof setTimeout> | undefined;
-  const scheduleLensRefresh = (uri: vscode.Uri): void => {
-    if (uri.scheme !== 'file' && uri.scheme !== 'untitled') {
-      return;
-    }
-    if (lensRefreshTimer) {
-      clearTimeout(lensRefreshTimer);
-    }
-    lensRefreshTimer = setTimeout(() => {
-      lensRefreshTimer = undefined;
-      void sqlCodeLens.refresh(uri);
-    }, 250);
-  };
-
   context.subscriptions.push(
     sqlStatusBar,
     vscode.languages.registerCodeLensProvider({ language: 'sql' }, sqlCodeLens),
     vscode.window.onDidChangeActiveTextEditor(() => {
       void refreshSqlStatus();
       refreshSqlLenses();
-    }),
-    vscode.workspace.onDidChangeTextDocument((event) => {
-      if (event.document.languageId === 'sql') {
-        scheduleLensRefresh(event.document.uri);
-      }
     }),
     vscode.window.onDidChangeTextEditorSelection(() => void refreshSqlStatus()),
     associations.onDidChange((change) => {
@@ -243,7 +221,6 @@ export function activate(context: vscode.ExtensionContext): void {
       void refreshSqlStatus();
       sqlCodeLens.refreshAll();
     }),
-    { dispose: () => lensRefreshTimer && clearTimeout(lensRefreshTimer) },
   );
   void refreshSqlStatus();
   refreshSqlLenses();

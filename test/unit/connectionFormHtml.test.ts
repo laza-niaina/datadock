@@ -53,11 +53,15 @@ describe('connection form shell', () => {
     assert.ok(!/<(?:input|textarea)[^>]*\svalue="/.test(formPart), 'the shell must not carry any field value');
   });
 
-  it('offers the two steps: engine catalog, then the settings form', () => {
-    assert.ok(page.includes('id="engine-catalog"'));
-    assert.ok(page.includes('id="step-catalog"'));
-    assert.ok(page.includes('id="step-form"'));
-    assert.ok(page.includes('data-action="change-engine"'));
+  it('keeps the engine choice as an underline tab strip inside the form', () => {
+    assert.ok(page.includes('id="engine-tabs"'));
+    assert.ok(page.includes('class="tab-strip"'));
+    assert.ok(page.includes('id="f-engine"'));
+    // The single-screen flow: no catalog step, no engine drawer.
+    assert.ok(!page.includes('engine-catalog'));
+    assert.ok(!page.includes('engine-card'));
+    assert.ok(!page.includes('step-catalog'));
+    assert.ok(!page.includes('data-action="change-engine"'));
   });
 
   it('exposes Test Connection, Save, Close and Connect as distinct actions', () => {
@@ -108,8 +112,9 @@ describe('formApp.css invariants', () => {
     assert.match(css, /@media \(max-width: 700px\)[\s\S]*flex: 1 1 100%/);
   });
 
-  it('reflows the engine cards against the panel width, not the window', () => {
-    assert.match(css, /grid-template-columns: repeat\(auto-fill, minmax\(\d+px, 1fr\)\)/);
+  it('reflows the engine tabs against the panel width, not the window', () => {
+    assert.match(css, /\.tab-strip\s*\{[^}]*flex-wrap:\s*wrap/);
+    assert.match(css, /\.tab\.active\s*\{[^}]*box-shadow:\s*inset 0 -2px 0/);
   });
 });
 
