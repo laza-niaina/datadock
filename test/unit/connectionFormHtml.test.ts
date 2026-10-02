@@ -57,6 +57,20 @@ describe('connection form shell', () => {
     assert.ok(page.includes('id="engine-tabs"'));
     assert.ok(page.includes('class="tab-strip"'));
     assert.ok(page.includes('id="f-engine"'));
+    // The strip and the select it mirrors must live inside the <form>: the
+    // script scopes `field()`, `readDraft()` and the tab click delegation to
+    // `#connection-form`, so an element outside it renders nothing and never
+    // reports the chosen engine (regression: 2026-10-02, empty tab strip).
+    const open = page.indexOf('<form id="connection-form"');
+    const close = page.indexOf('</form>');
+    assert.ok(open >= 0 && close > open, 'the form element must exist');
+    const formMarkup = page.slice(open, close);
+    assert.ok(formMarkup.includes('id="engine-tabs"'), 'the tab strip must be inside the form');
+    assert.ok(formMarkup.includes('id="f-engine"'), 'the engine select must be inside the form');
+    assert.ok(
+      page.indexOf('id="engine-tabs"') > open,
+      'the tab strip must not be declared before the form element',
+    );
     // The single-screen flow: no catalog step, no engine drawer.
     assert.ok(!page.includes('engine-catalog'));
     assert.ok(!page.includes('engine-card'));

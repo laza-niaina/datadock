@@ -45,15 +45,14 @@ const FORM_BODY = `
 
   <blockquote class="panel" id="status" aria-live="polite"></blockquote>
 
-  <div class="block">
-    <div class="field-label">Database Type</div>
-    <ul class="tab-strip" id="engine-tabs" role="group" aria-label="Database Type"></ul>
-    <div class="hidden" aria-hidden="true">
-      <select id="f-engine" data-draft="engine"></select>
-    </div>
-  </div>
-
-  <form id="connection-form" autocomplete="off" novalidate">
+  <form id="connection-form" autocomplete="off" novalidate>
+      <div class="block">
+        <div class="field-label">Database Type</div>
+        <ul class="tab-strip" id="engine-tabs" role="group" aria-label="Database Type"></ul>
+        <div class="hidden" aria-hidden="true">
+          <select id="f-engine" data-draft="engine"></select>
+        </div>
+      </div>
       <div class="block">
         <div class="row">
           <div class="field">
