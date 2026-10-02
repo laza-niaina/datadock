@@ -8,9 +8,9 @@ import {
 import type { ColumnInfo } from '../../src/db/types';
 
 const COLUMNS: ColumnInfo[] = [
-  { name: 'id', dataType: 'INTEGER', nullable: false, isPrimaryKey: true, isAutoIncrement: true, ordinal: 1 },
-  { name: 'name', dataType: 'VARCHAR(255)', nullable: false, isPrimaryKey: false, isAutoIncrement: false, ordinal: 2 },
-  { name: 'note', dataType: 'TEXT', nullable: true, isPrimaryKey: false, isAutoIncrement: false, ordinal: 3 },
+  { name: 'id', dataType: 'INTEGER', nullable: false, isPrimaryKey: true, isForeignKey: false, isAutoIncrement: true, ordinal: 1 },
+  { name: 'name', dataType: 'VARCHAR(255)', nullable: false, isPrimaryKey: false, isForeignKey: false, isAutoIncrement: false, ordinal: 2 },
+  { name: 'note', dataType: 'TEXT', nullable: true, isPrimaryKey: false, isForeignKey: true, isAutoIncrement: false, ordinal: 3 },
 ];
 
 function options(request: TableDataSqlOptions['request']): TableDataSqlOptions {

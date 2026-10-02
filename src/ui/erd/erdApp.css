@@ -1,0 +1,447 @@
+/* DataDock entity relationship diagram webview theme.
+ *
+ * Same rules as the result view and the connection form:
+ *  - every colour comes from `--vscode-*` (via `../shared/tokens.css`), so the
+ *    diagram follows the active theme, light, dark and high-contrast included;
+ *  - no `@font-face`, no icon font, no `content:` glyph, no `::before` /
+ *    `::after` icon, no emoji: the toolbar marks and the PK / FK badges are the
+ *    real SVG assets drawn in `ui/icons.ts`;
+ *  - spacing stays on the 4 / 8 / 12 / 16 scale and toolbar controls keep the
+ *    shared 30px control height.
+ *
+ * The canvas is a plain surface: the boxes and the edges carry all of the
+ * information, so nothing decorative competes with a schema line.
+ */
+
+@import '../shared/tokens.css';
+
+:root {
+  /* Relationship line: a chart colour that exists in every stock theme, with
+     the description foreground as the fallback for a stripped-down one. */
+  --dd-erd-edge: var(--vscode-charts-blue, var(--vscode-descriptionForeground));
+  --dd-erd-edge-active: var(--vscode-focusBorder, var(--dd-erd-edge));
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--dd-font);
+  font-size: var(--vscode-font-size);
+  color: var(--dd-fg);
+  background: var(--dd-bg);
+  overflow: hidden;
+  user-select: none;
+}
+
+.dd-erd {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 320px;
+}
+
+/* toolbar ------------------------------------------------------------------ */
+.dd-erd-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--dd-space-2);
+  padding: var(--dd-space-2) var(--dd-space-3);
+  border-bottom: 1px solid var(--dd-border);
+  background: var(--dd-widget-bg);
+}
+
+.dd-erd-group {
+  display: flex;
+  align-items: center;
+  gap: var(--dd-space-1);
+}
+
+.dd-erd-spacer {
+  flex: 1 1 auto;
+}
+
+.dd-erd-scope {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--dd-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+
+.dd-erd-scope strong {
+  font-weight: 600;
+  color: var(--dd-fg);
+}
+
+.dd-erd-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dd-space-1);
+  height: var(--dd-control-height);
+  min-width: var(--dd-control-height);
+  padding: 0 var(--dd-space-2);
+  border: 1px solid var(--dd-border);
+  border-radius: var(--dd-radius);
+  background: var(--dd-widget-bg);
+  color: var(--dd-fg);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.dd-erd-btn:hover {
+  background: var(--dd-hover);
+}
+
+.dd-erd-btn:focus-visible {
+  outline: 1px solid var(--dd-focus);
+  outline-offset: 1px;
+}
+
+.dd-erd-btn svg {
+  width: var(--dd-icon-size);
+  height: var(--dd-icon-size);
+  flex: 0 0 auto;
+}
+
+.dd-erd-btn.is-on {
+  border-color: var(--dd-focus);
+  background: var(--dd-selected);
+  color: var(--dd-selected-fg);
+}
+
+.dd-erd-zoom {
+  min-width: 48px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--dd-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.dd-erd-stats {
+  font-size: 11px;
+  color: var(--dd-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* schema selector ---------------------------------------------------------- */
+.dd-erd-schemas {
+  position: relative;
+}
+
+.dd-erd-schema-label {
+  font-size: 12px;
+}
+
+.dd-erd-schema-caret {
+  display: inline-flex;
+  align-items: center;
+}
+
+.dd-erd-schema-caret svg {
+  width: 12px;
+  height: 12px;
+}
+
+.dd-erd-pop {
+  position: absolute;
+  top: calc(100% + var(--dd-space-1));
+  left: 0;
+  z-index: 20;
+  min-width: 240px;
+  max-height: 320px;
+  overflow: auto;
+  padding: var(--dd-space-2);
+  border: 1px solid var(--dd-border);
+  border-radius: var(--dd-radius);
+  background: var(--dd-widget-bg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.32);
+}
+
+.dd-erd-pop-actions {
+  display: flex;
+  gap: var(--dd-space-1);
+  padding-bottom: var(--dd-space-2);
+  margin-bottom: var(--dd-space-2);
+  border-bottom: 1px solid var(--dd-border);
+}
+
+.dd-erd-pop-actions .dd-erd-btn {
+  flex: 1 1 auto;
+  height: 26px;
+}
+
+.dd-erd-check {
+  display: flex;
+  align-items: center;
+  gap: var(--dd-space-2);
+  height: 24px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.dd-erd-check input {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.dd-erd-check span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dd-erd-pop-empty {
+  font-size: 12px;
+  color: var(--dd-muted);
+}
+
+/* search ------------------------------------------------------------------- */
+.dd-erd-search {
+  display: flex;
+  align-items: center;
+  gap: var(--dd-space-1);
+  height: var(--dd-control-height);
+  padding: 0 var(--dd-space-2);
+  border: 1px solid var(--dd-input-border);
+  border-radius: var(--dd-radius);
+  background: var(--dd-input-bg);
+  color: var(--dd-muted);
+}
+
+.dd-erd-search:focus-within {
+  border-color: var(--dd-focus);
+}
+
+.dd-erd-search svg {
+  width: var(--dd-icon-size);
+  height: var(--dd-icon-size);
+  flex: 0 0 auto;
+}
+
+.dd-erd-search input {
+  flex: 1 1 auto;
+  width: 180px;
+  min-width: 80px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--dd-input-fg);
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.dd-erd-search input::placeholder {
+  color: var(--dd-placeholder);
+}
+
+/* canvas ------------------------------------------------------------------- */
+.dd-erd-canvas {
+  position: relative;
+  flex: 1 1 auto;
+  overflow: hidden;
+  background: var(--dd-bg);
+  cursor: grab;
+  touch-action: none;
+}
+
+.dd-erd-canvas.is-panning {
+  cursor: grabbing;
+}
+
+.dd-erd-world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.dd-erd-edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.dd-erd-edge {
+  fill: none;
+  stroke: var(--dd-erd-edge);
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  /* The svg itself ignores the pointer; only the stroke is hoverable, which is
+     what makes the `<title>` of a line reachable. */
+  pointer-events: stroke;
+}
+
+.dd-erd-edge.is-lit {
+  stroke: var(--dd-erd-edge-active);
+  stroke-width: 2;
+}
+
+/* table box ---------------------------------------------------------------- */
+.dd-erd-box {
+  position: absolute;
+  box-sizing: border-box;
+  width: 240px;
+  border: 1px solid var(--dd-border);
+  border-radius: var(--dd-radius);
+  background: var(--dd-widget-bg);
+  overflow: hidden;
+  cursor: move;
+}
+
+.dd-erd-box.is-drag {
+  z-index: 10;
+  border-color: var(--dd-focus);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.32);
+}
+
+.dd-erd-box:focus-visible {
+  outline: 1px solid var(--dd-focus);
+  outline-offset: 1px;
+}
+
+.dd-erd-head {
+  display: flex;
+  align-items: center;
+  gap: var(--dd-space-1);
+  height: 32px;
+  padding: 0 var(--dd-space-2);
+  background: var(--dd-stripe);
+  border-bottom: 1px solid var(--dd-border);
+  font-size: 12px;
+}
+
+.dd-erd-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dd-erd-scope-tag {
+  margin-left: auto;
+  flex: 0 1 auto;
+  font-size: 11px;
+  color: var(--dd-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+
+.dd-erd-box--view {
+  border-style: dashed;
+}
+
+.dd-erd-col {
+  display: flex;
+  align-items: center;
+  gap: var(--dd-space-1);
+  height: 24px;
+  padding: 0 var(--dd-space-2);
+  font-size: 11px;
+}
+
+.dd-erd-marks {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.dd-erd-col:hover {
+  background: var(--dd-hover);
+}
+
+/* Fixed 18px slot keeps the name column from shifting when a row carries a
+   key mark: the layout maths (and therefore every edge anchor) depends on it. */
+.dd-erd-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+}
+
+.dd-erd-mark .dd-icon svg,
+.dd-erd-mark svg {
+  width: 12px;
+  height: 12px;
+}
+
+.dd-erd-mark--primary {
+  color: var(--dd-key);
+}
+
+.dd-erd-mark--foreign {
+  color: var(--dd-fk);
+}
+
+.dd-erd-colname {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--dd-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dd-erd-coltype {
+  flex: 0 1 auto;
+  max-width: 96px;
+  color: var(--dd-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dd-erd-empty-col {
+  font-size: 11px;
+  color: var(--dd-muted);
+  height: 24px;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--dd-space-2);
+}
+
+/* loading / empty / error -------------------------------------------------- */
+.dd-erd-state {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dd-space-2);
+  padding: var(--dd-space-4);
+  text-align: center;
+  background: var(--dd-bg);
+}
+
+.dd-erd-state-title {
+  font-size: 13px;
+  color: var(--dd-fg);
+}
+
+.dd-erd-state-text {
+  font-size: 12px;
+  color: var(--dd-muted);
+  max-width: 460px;
+  line-height: 1.5;
+}

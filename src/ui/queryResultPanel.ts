@@ -13,7 +13,7 @@
 
 import * as vscode from 'vscode';
 import type { EngineId, QueryResultSet } from '../db/types';
-import type { GridCell, GridColumn, GridExportFormat } from './dataGrid/dataGridModel';
+import type { ColumnKeyMap, GridCell, GridColumn, GridExportFormat } from './dataGrid/dataGridModel';
 import { renderGridExport, exportFileName, serializeGridValue } from './dataGrid/dataGridModel';
 import {
   renderDataGridPage,
@@ -58,6 +58,13 @@ export interface QueryDisplayOptions {
   readonly statements: readonly QueryStatementDisplay[];
   /** True when at least one statement reported an error. */
   readonly hasError: boolean;
+  /**
+   * Schema key flags resolved host-side so a query result can show the
+   * primary/foreign key marks of the relation it reads. Absent when the table
+   * could not be determined (subquery, CTE) or the lookup failed: a grid then
+   * simply renders no mark instead of guessing.
+   */
+  readonly columnKeys?: ColumnKeyMap;
 }
 
 type ResultMessage =
@@ -71,8 +78,16 @@ function gridFromResultSet(
   resultSet: QueryResultSet,
   gridIndex: number,
   resultCount: number,
+  columnKeys: ColumnKeyMap | undefined,
 ): GridViewGrid {
-  const columns: GridColumn[] = resultSet.fields.map((field) => ({ name: field.name, type: field.type }));
+  const table = tableFromStatement(statement.text);
+  const keyFlags = table === '' ? undefined : columnKeys?.[table];
+  const columns: GridColumn[] = resultSet.fields.map((field) => {
+    const flags = keyFlags?.[field.name];
+    return flags === undefined
+      ? { name: field.name, type: field.type }
+      : { name: field.name, type: field.type, primaryKey: flags.primaryKey, foreignKey: flags.foreignKey };
+  });
   const rows: GridCell[][] = resultSet.rows.map((row) => row.map((value) => serializeGridValue(value)));
   const status: GridViewGrid['status'] = statement.error !== undefined ? 'error' : statement.skipped ? 'skipped' : resultSet.isMutation ? 'mutation' : 'ok';
   const label = resultCount > 1 ? `#${statement.index}.${gridIndex + 1}` : `#${statement.index}`;
@@ -92,7 +107,10 @@ function gridFromResultSet(
   };
 }
 
-function gridsForStatements(statements: readonly QueryStatementDisplay[]): GridViewGrid[] {
+function gridsForStatements(
+  statements: readonly QueryStatementDisplay[],
+  columnKeys: ColumnKeyMap | undefined,
+): GridViewGrid[] {
   const grids: GridViewGrid[] = [];
   for (const statement of statements) {
     const resultSets = statement.results ?? [];
@@ -112,14 +130,14 @@ function gridsForStatements(statements: readonly QueryStatementDisplay[]): GridV
       continue;
     }
     resultSets.forEach((resultSet, resultSetIndex) => {
-      grids.push(gridFromResultSet(statement, resultSet, resultSetIndex, resultSets.length));
+      grids.push(gridFromResultSet(statement, resultSet, resultSetIndex, resultSets.length, columnKeys));
     });
   }
   return grids;
 }
 
 function renderQueryResultPage(panel: vscode.WebviewPanel, options: QueryDisplayOptions): string {
-  const grids = gridsForStatements(options.statements);
+  const grids = gridsForStatements(options.statements, options.columnKeys);
   const firstActive = Math.max(0, grids.findIndex((grid) => grid.status === 'error'));
   const viewOptions: DataGridViewOptions = {
     mode: 'query',

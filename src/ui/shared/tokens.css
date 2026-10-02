@@ -42,6 +42,15 @@
   --dd-green: var(--vscode-charts-green);
   --dd-red: var(--vscode-errorForeground);
 
+  /* schema key marks ---------------------------------------------------- */
+  /* `charts-yellow` / `charts-purple` belong to VS Code's colour registry, so
+     every stock theme resolves them to the hue a primary and a foreign key
+     are drawn in. The fallbacks only matter for a custom theme that drops one
+     of them; a literal never reaches a consumer stylesheet, which keeps the
+     "token-only palette" rule intact. */
+  --dd-key: var(--vscode-charts-yellow, var(--vscode-editorWarning-foreground));
+  --dd-fk: var(--vscode-charts-purple, var(--vscode-descriptionForeground));
+
   /* inputs and buttons -------------------------------------------------- */
   --dd-input-bg: var(--vscode-input-background);
   --dd-input-fg: var(--vscode-input-foreground);

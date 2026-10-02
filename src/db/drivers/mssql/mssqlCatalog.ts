@@ -13,7 +13,7 @@
  */
 
 import { DbError } from '../../errors';
-import type { ColumnInfo, RoutineInfo, SchemaRef, TableInfo } from '../../types';
+import type { ColumnInfo, ForeignKeyInfo, RelationColumns, RoutineInfo, SchemaRef, TableInfo } from '../../types';
 
 export interface MssqlRow {
   readonly [column: string]: unknown;
@@ -54,7 +54,8 @@ export const MSSQL_SQL = {
            c.COLUMN_DEFAULT       AS columnDefault,
            c.ORDINAL_POSITION     AS ordinal,
            COLUMNPROPERTY(OBJECT_ID(@p1 + '.' + @p2), c.COLUMN_NAME, 'IsIdentity') AS isIdentity,
-           CASE WHEN pk.COLUMN_NAME IS NULL THEN 0 ELSE 1 END AS isPrimaryKey
+           CASE WHEN pk.COLUMN_NAME IS NULL THEN 0 ELSE 1 END AS isPrimaryKey,
+           CASE WHEN fk.COLUMN_NAME IS NULL THEN 0 ELSE 1 END AS isForeignKey
       FROM INFORMATION_SCHEMA.COLUMNS c
       LEFT JOIN (
         SELECT kcu.COLUMN_NAME
@@ -67,9 +68,54 @@ export const MSSQL_SQL = {
            AND kcu.TABLE_NAME   = @p2
            AND tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
       ) pk ON pk.COLUMN_NAME = c.COLUMN_NAME
+      LEFT JOIN (
+        SELECT DISTINCT kcu.COLUMN_NAME
+          FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+         WHERE kcu.TABLE_SCHEMA = @p1
+           AND kcu.TABLE_NAME   = @p2
+           AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
+      ) fk ON fk.COLUMN_NAME = c.COLUMN_NAME
      WHERE c.TABLE_SCHEMA = @p1
        AND c.TABLE_NAME   = @p2
      ORDER BY c.ORDINAL_POSITION`,
+  /**
+   * 1 parameter: schema. The same columns as `columns` for **every** relation
+   * of the schema at once, so the ER diagram never issues one query per table.
+   * The identity lookup is rebuilt per row from `OBJECT_ID`, which is what
+   * removes the table parameter.
+   */
+  schemaColumns: `
+    SELECT c.TABLE_NAME            AS tableName,
+           c.COLUMN_NAME           AS columnName,
+           c.DATA_TYPE             AS dataType,
+           c.CHARACTER_MAXIMUM_LENGTH AS charLength,
+           c.NUMERIC_PRECISION     AS numPrecision,
+           c.NUMERIC_SCALE         AS numScale,
+           c.IS_NULLABLE           AS isNullable,
+           c.COLUMN_DEFAULT        AS columnDefault,
+           c.ORDINAL_POSITION      AS ordinal,
+           COLUMNPROPERTY(OBJECT_ID(QUOTENAME(c.TABLE_SCHEMA) + '.' + QUOTENAME(c.TABLE_NAME)), c.COLUMN_NAME, 'IsIdentity') AS isIdentity,
+           CASE WHEN pk.COLUMN_NAME IS NULL THEN 0 ELSE 1 END AS isPrimaryKey,
+           CASE WHEN fk.COLUMN_NAME IS NULL THEN 0 ELSE 1 END AS isForeignKey
+      FROM INFORMATION_SCHEMA.COLUMNS c
+      LEFT JOIN (
+        SELECT kcu.TABLE_NAME, kcu.COLUMN_NAME
+          FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+          JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+            ON tc.CONSTRAINT_SCHEMA = kcu.CONSTRAINT_SCHEMA
+           AND tc.CONSTRAINT_NAME   = kcu.CONSTRAINT_NAME
+           AND tc.TABLE_NAME        = kcu.TABLE_NAME
+         WHERE kcu.TABLE_SCHEMA = @p1
+           AND tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+      ) pk ON pk.TABLE_NAME = c.TABLE_NAME AND pk.COLUMN_NAME = c.COLUMN_NAME
+      LEFT JOIN (
+        SELECT DISTINCT kcu.TABLE_NAME, kcu.COLUMN_NAME
+          FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+         WHERE kcu.TABLE_SCHEMA = @p1
+           AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
+      ) fk ON fk.TABLE_NAME = c.TABLE_NAME AND fk.COLUMN_NAME = c.COLUMN_NAME
+     WHERE c.TABLE_SCHEMA = @p1
+     ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION`,
   /** 1 parameter: schema. */
   routines: `
     SELECT ROUTINE_NAME AS routineName,
@@ -77,6 +123,29 @@ export const MSSQL_SQL = {
       FROM INFORMATION_SCHEMA.ROUTINES
      WHERE ROUTINE_SCHEMA = @p1
      ORDER BY ROUTINE_NAME`,
+  /**
+   * 1 parameter: schema. One catalog-wide pass over `sys.foreign_keys` yields
+   * both ends of every foreign key of the schema - never one query per table.
+   */
+  foreignKeys: `
+    SELECT fk.name                                   AS constraintName,
+           OBJECT_SCHEMA_NAME(fk.parent_object_id)   AS sourceSchema,
+           st.name                                   AS sourceTable,
+           sc.name                                   AS sourceColumn,
+           OBJECT_SCHEMA_NAME(fk.referenced_object_id) AS targetSchema,
+           rt.name                                   AS targetTable,
+           rc.name                                   AS targetColumn,
+           fkc.constraint_column_id                 AS ordinal
+      FROM sys.foreign_keys fk
+      JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+      JOIN sys.tables st  ON st.object_id  = fk.parent_object_id
+      JOIN sys.columns sc ON sc.object_id  = fkc.parent_object_id
+                         AND sc.column_id  = fkc.parent_column_id
+      JOIN sys.tables rt  ON rt.object_id  = fk.referenced_object_id
+      JOIN sys.columns rc ON rc.object_id  = fkc.referenced_object_id
+                         AND rc.column_id  = fkc.referenced_column_id
+     WHERE OBJECT_SCHEMA_NAME(fk.parent_object_id) = @p1
+     ORDER BY fk.name, fkc.constraint_column_id`,
 } as const;
 
 /** Databases created by the server that users never query. */
@@ -178,6 +247,7 @@ export function toColumnInfos(rows: readonly MssqlRow[]): ColumnInfo[] {
     dataType: mssqlDataType(row),
     nullable: toNullableString(row['isNullable']) === 'YES',
     isPrimaryKey: toBool(row['isPrimaryKey']),
+    isForeignKey: toBool(row['isForeignKey']),
     isAutoIncrement: toBool(row['isIdentity']),
     defaultValue: toNullableString(row['columnDefault']),
     ordinal: toOrdinal(row['ordinal'], index),
@@ -205,6 +275,63 @@ export function toRoutineInfos(rows: readonly MssqlRow[]): RoutineInfo[] {
       routineType,
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Schema-wide columns (ER diagram)
+// ---------------------------------------------------------------------------
+
+/**
+ * Groups `schemaColumns` rows into one entry per relation.
+ *
+ * Grouping by name (not by contiguity) keeps the mapper correct even if the
+ * engine reorders rows.
+ */
+export function toRelationColumns(rows: readonly MssqlRow[]): RelationColumns[] {
+  const groups = new Map<string, MssqlRow[]>();
+  const order: string[] = [];
+  for (const row of rows) {
+    const table = String(row['tableName'] ?? '');
+    if (table === '') {
+      continue;
+    }
+    let bucket = groups.get(table);
+    if (bucket === undefined) {
+      bucket = [];
+      groups.set(table, bucket);
+      order.push(table);
+    }
+    bucket.push(row);
+  }
+  return order.map((table) => ({ table, columns: toColumnInfos(groups.get(table) ?? []) }));
+}
+
+// ---------------------------------------------------------------------------
+// Foreign keys (ER diagram)
+// ---------------------------------------------------------------------------
+
+/** Maps the catalog-wide `foreignKeys` rows into `ForeignKeyInfo`. */
+export function toForeignKeyInfos(rows: readonly MssqlRow[]): ForeignKeyInfo[] {
+  const keys: ForeignKeyInfo[] = [];
+  for (const row of rows) {
+    const sourceTable = toNullableString(row['sourceTable']);
+    const sourceColumn = toNullableString(row['sourceColumn']);
+    const targetTable = toNullableString(row['targetTable']);
+    if (sourceTable === null || sourceColumn === null || targetTable === null) {
+      continue;
+    }
+    keys.push({
+      name: toNullableString(row['constraintName']) ?? undefined,
+      sourceSchema: toNullableString(row['sourceSchema']) ?? undefined,
+      sourceTable,
+      sourceColumn,
+      targetSchema: toNullableString(row['targetSchema']) ?? undefined,
+      targetTable,
+      targetColumn: toNullableString(row['targetColumn']) ?? undefined,
+      ordinal: toOrdinal(row['ordinal'], keys.length),
+    });
+  }
+  return keys;
 }
 
 // ---------------------------------------------------------------------------

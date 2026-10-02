@@ -151,10 +151,20 @@ describe('resultApp.css invariants', () => {
     assert.ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(stripped));
   });
 
-  it('keeps the resize affordance geometric (no glyph or arrow content)', () => {
-    assert.match(css, /\.dd-col-resize/);
+  it('keeps the resize affordance on the library handle (no second system)', () => {
+    // umy-table's own `.plx-resizable` element does the dragging; this
+    // stylesheet only paints it. The hand-made `.dd-col-resize` span is gone:
+    // two resize systems would disagree about which width is authoritative.
+    assert.match(css, /\.plx-header--column \.plx-resizable\s*\{/);
     assert.match(css, /cursor:\s*col-resize/);
+    assert.ok(!/\.dd-col-resize/.test(stripped));
     assert.ok(!/↔|↕|⇔|⇕|⟷|⟺/.test(css));
+  });
+
+  it('styles no invented index column', () => {
+    // Result columns are the driver's own; `#`/`index`/`id` are data, and a
+    // dedicated green gutter column must not come back through the CSS.
+    assert.ok(!/\.col--index/.test(stripped));
   });
 
   it('takes its palette from the shared token file', () => {
@@ -176,5 +186,120 @@ describe('resultApp.css invariants', () => {
     // the app never rendered. Remounting the grid to animate a tab switch would
     // cost more than it shows, so the rule must stay gone.
     assert.ok(!/\.dd-fade/.test(css));
+  });
+});
+
+describe('result grid wiring', () => {
+  // Source guards: the webview bundle is a template-literal program, so the
+  // refactors that must never regress are asserted where they are written.
+  const app = readFileSync(join(__dirname, '..', '..', '..', 'src', 'ui', 'resultView', 'resultApp.ts'), 'utf8');
+  const viewer = readFileSync(join(__dirname, '..', '..', '..', 'src', 'ui', 'tableViewerPanel.ts'), 'utf8');
+  const resultPanel = readFileSync(join(__dirname, '..', '..', '..', 'src', 'ui', 'queryResultPanel.ts'), 'utf8');
+  const commands = readFileSync(join(__dirname, '..', '..', '..', 'src', 'commands', 'queryCommands.ts'), 'utf8');
+
+  it('leaves column resizing to umy-table and re-measures through its API', () => {
+    assert.match(app, /resizable: true/);
+    assert.match(app, /"header-dragend"/);
+    assert.match(app, /resetColumn\(true\)/);
+    // The hand-made drag system and its stale width channel are gone.
+    assert.ok(!/beginResize/.test(app));
+    assert.ok(!/dd-col-resize/.test(app));
+    assert.ok(!/widths\[this\.grid\.id\]/.test(app));
+  });
+
+  it('renders only the columns the driver returned', () => {
+    assert.ok(!/type: "index"/.test(app));
+    assert.ok(!/col--index/.test(app));
+    assert.match(app, /fieldsFor\(/);
+  });
+
+  it('gives the grid a keyboard cursor and tears its listeners down', () => {
+    assert.match(app, /tabindex: "0"/);
+    assert.match(app, /"aria-activedescendant"/);
+    assert.match(app, /beforeDestroy\(\)/);
+    assert.match(app, /removeEventListener\("keydown", this\.onGlobalKeydown\)/);
+    assert.match(app, /removeEventListener\("resize", this\.onWindowResize\)/);
+    assert.ok(!/window\.addEventListener\("keydown", \(/.test(app), 'listeners must be named, not inline');
+    assert.ok(!/window\.addEventListener\("resize", \(/.test(app), 'listeners must be named, not inline');
+  });
+
+  it('labels every icon action and exposes its overlays to assistive tech', () => {
+    // Icon-only buttons carry a tooltip and report the state they toggle.
+    assert.match(app, /"aria-haspopup": "dialog"/);
+    assert.match(app, /"aria-expanded": this\.columnsOpen \? "true" : "false"/);
+    assert.match(app, /"aria-pressed": this\.compact \? "true" : "false"/);
+    // The three popovers and the cell detail are labelled dialogs, never
+    // anonymous divs a screen reader would skip.
+    assert.ok((app.match(/role: "dialog"/g) ?? []).length >= 4);
+    assert.match(app, /"aria-label": "Columns"/);
+    assert.match(app, /"aria-label": "Export Format"/);
+    assert.match(app, /"aria-label": `Filter:/);
+    // Loading and error states are announced rather than painted silently.
+    assert.match(app, /role: "status"/);
+    assert.match(app, /"aria-busy"/);
+  });
+
+  it('paints table-viewer failures as a banner over the kept grid', () => {
+    // A bare `<h1>` page loses the toolbar, the pager and the VS Code chrome.
+    assert.ok(!/<h1>/.test(viewer));
+    assert.ok(!/escapeHtml/.test(viewer));
+    assert.ok(!/randomBytes/.test(viewer));
+    assert.match(viewer, /error: this\.error/);
+    // Two requests in flight must not paint in the wrong order.
+    assert.match(viewer, /sequence !== this\.sequence/);
+    // And the page must not be reloaded from the webview's own `ready`.
+    assert.match(viewer, /this\.page === undefined && this\.error === undefined/);
+  });
+
+  it('marks declared keys with a drawn icon rather than a glyph', () => {
+    // Both grids get the marks: the table viewer knows its relation outright,
+    // and a query result resolves the relation the statement reads.
+    assert.match(viewer, /primaryKey: column\.isPrimaryKey/);
+    assert.match(viewer, /foreignKey: column\.isForeignKey/);
+    assert.match(app, /keyMarkVNodes\(h, field\)/);
+    assert.match(app, /iconKeyMark\(\)/);
+    assert.match(app, /iconHashtagMark\(\)/);
+    // The mark is an image with a name, so the shape is not the only channel.
+    assert.match(app, /role: "img"/);
+    assert.match(app, /"aria-label": label/);
+    // Never the `#` character, never a pseudo-element, never an emoji: those
+    // would either impersonate a real column named `#` or breach the CSS rule.
+    assert.ok(!/dd-col-mark[^}]*content:/.test(app));
+    assert.ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(app));
+  });
+
+  it('resolves a query result\'s keys without ever failing the batch', () => {
+    // A result set carries only names and types, so the flags come from a
+    // catalog lookup keyed by the statement's own table.
+    assert.match(resultPanel, /columnKeys\?\.\[table\]/);
+    assert.match(resultPanel, /readonly columnKeys\?: ColumnKeyMap/);
+    assert.match(commands, /async function resolveColumnKeys/);
+    assert.match(commands, /await resolveColumnKeys\(/);
+    // Every lookup is best-effort: metadata is decoration on an already
+    // successful run, so a failing or unlocatable relation is swallowed.
+    assert.match(commands, /catch \{\s*\n\s*continue;/);
+    assert.match(commands, /return \{\};/);
+  });
+
+  it('relabels the library sort carets instead of showing its own wording', () => {
+    // The two carets that actually sort are umy-table's markup, and its
+    // template ships their tooltips in Chinese. They are relabelled after
+    // render rather than removed: the click handler that sorts lives on them.
+    assert.match(app, /labelSortHandles\(\): number/);
+    assert.match(app, /classList\.contains\("plx-sort--asc-btn"\)/);
+    assert.match(app, /Sort ascending: lowest to highest/);
+    assert.match(app, /Sort descending: highest to lowest/);
+    // The selection column's header toggle is the library's markup too, and
+    // carries the same Chinese wording; it is rewritten in the same pass.
+    assert.match(app, /SELECT_ALL_TITLE = "Select or clear all rows"/);
+    assert.match(app, /\.plx-table--header \.plx-cell--checkbox/);
+    // The carets appear one flush after mount, so the walk is retried from
+    // `updated` until it has found one, and then costs a boolean check.
+    assert.match(app, /updated\(\): void \{\s*\n\s*if \(!this\.sortHandlesLabelled\)/);
+    assert.match(app, /this\.sortHandlesLabelled = handles\.length > 0;/);
+    assert.match(app, /this\.labelSortHandles\(\)/);
+    assert.match(app, /activeFields\(\): void \{\s*\n\s*this\.sortHandlesLabelled = false;\s*\n\s*this\.\$nextTick\(\(\) => this\.labelSortHandles\(\)\);/);
+    // No CJK text may be left anywhere in the app source.
+    assert.ok(!/[\u4e00-\u9fff]/.test(app));
   });
 });

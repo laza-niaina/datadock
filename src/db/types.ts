@@ -210,6 +210,8 @@ export interface ColumnInfo {
   dataType: string;
   nullable: boolean;
   isPrimaryKey: boolean;
+  /** Column takes part in a foreign key constraint declared on the relation. */
+  isForeignKey: boolean;
   isAutoIncrement: boolean;
   defaultValue?: string | null;
   comment?: string;
@@ -222,6 +224,40 @@ export interface RoutineInfo {
   kind: 'procedure' | 'function';
   /** `PROCEDURE`, `FUNCTION`, `AGGREGATE`, ... as reported by the engine. */
   routineType?: string;
+}
+
+/** Columns of one relation, as returned by {@link DatabaseDriver.listSchemaColumns}. */
+export interface RelationColumns {
+  /** Relation name exactly as `listTables` reports it. */
+  table: string;
+  columns: ColumnInfo[];
+}
+
+/**
+ * One end of a declared foreign-key constraint.
+ *
+ * `ColumnInfo.isForeignKey` only answers "is this column part of a foreign
+ * key"; an ER diagram needs the other end too, so this model carries the
+ * referenced table *and* column. Everything is reported by the engine -
+ * nothing is inferred from naming conventions.
+ *
+ * Composite keys yield one entry per participating column, sharing
+ * `name`/`ordinal` with their siblings so callers can group them.
+ */
+export interface ForeignKeyInfo {
+  /** Constraint name (`CONSTRAINT_NAME` / `conname`), when the engine has one. */
+  name?: string;
+  /** Schema holding the referencing table, when the engine separates schemas. */
+  sourceSchema?: string;
+  sourceTable: string;
+  sourceColumn: string;
+  /** Schema holding the referenced table; usually mirrors `sourceSchema`. */
+  targetSchema?: string;
+  targetTable: string;
+  /** Referenced column, or `undefined` when the FK points at the parent's PK. */
+  targetColumn?: string;
+  /** 1-based position of this column inside a composite constraint. */
+  ordinal: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +393,34 @@ export interface DatabaseDriver {
   listTables(ref: SchemaRef, token?: CancelToken): Promise<TableInfo[]>;
   listColumns(ref: TableRef, token?: CancelToken): Promise<ColumnInfo[]>;
   listRoutines?(ref: SchemaRef, token?: CancelToken): Promise<RoutineInfo[]>;
+  /**
+   * Columns of **every** relation of `ref`'s database/schema, in **one** call.
+   *
+   * The ER diagram needs every column of every selected table to anchor its
+   * relationship lines per column; calling `listColumns` once per table would
+   * turn a 200-table schema into 200 round trips for rows the information
+   * catalogues already return schema-wide. Implementations must not fall back
+   * to a per-table loop.
+   *
+   * Optional purely so an engine without a usable schema-wide column view
+   * degrades to "no columns" rather than failing to construct; the ER diagram
+   * then falls back to `listColumns`.
+   */
+  listSchemaColumns?(ref: SchemaRef, token?: CancelToken): Promise<RelationColumns[]>;
+  /**
+   * Every declared foreign key of `ref`'s database/schema, in **one** call.
+   *
+   * The ER diagram needs both ends of each constraint, which `ColumnInfo`
+   * cannot carry; this widens the existing metadata contract instead of
+   * adding a parallel lookup path. Implementations must not issue one query
+   * per table: engines expose a catalog-wide view (MySQL/PostgreSQL/MSSQL
+   * information catalogues, SQLite's `pragma_foreign_key_list` table-valued
+   * function) and are expected to use it.
+   *
+   * Optional purely so an engine without usable FK metadata degrades to "no
+   * relationships" rather than failing to construct.
+   */
+  listForeignKeys?(ref: SchemaRef, token?: CancelToken): Promise<ForeignKeyInfo[]>;
 
   execute(sql: string, token?: CancelToken): Promise<QueryExecutionResult>;
 

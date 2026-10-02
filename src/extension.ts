@@ -89,6 +89,7 @@ export function activate(context: vscode.ExtensionContext): void {
     registry: driverRegistry,
     logger,
     provider,
+    context,
     showOutput: () => logger.show(),
     revealConnection: async (connectionId: string) => {
       try {

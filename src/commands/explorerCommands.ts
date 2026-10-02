@@ -15,6 +15,7 @@ import {
   toQuickPickItem,
 } from '../explorer/explorerSearch';
 import { TableViewerPanel } from '../ui/tableViewerPanel';
+import { ErdPanel } from '../ui/erdPanel';
 import type { CommandServices, Register } from './types';
 
 /** Reads the display label of a tree item, whatever shape VS Code gave it. */
@@ -83,6 +84,30 @@ export function registerExplorerCommands(register: Register, services: CommandSe
     if (name !== '') {
       await vscode.env.clipboard.writeText(name);
     }
+  });
+
+  /**
+   * Opens the entity relationship diagram of a `Tables` folder in a real
+   * webview tab. The diagram reads the very metadata the tree just loaded
+   * (tables, schema-wide columns, foreign keys) through the metadata cache, so
+   * opening it never issues a second listing and never touches the data.
+   */
+  register('dbclient.erd.open', async (node?: unknown) => {
+    if (!(node instanceof FolderNode) || node.folder !== 'tables') {
+      void vscode.window.showInformationMessage(
+        'Open the Entity Relationship Diagram from a Tables folder in DataDock.',
+      );
+      return;
+    }
+    await ErdPanel.show({
+      manager: services.manager,
+      store: services.store,
+      cache: services.cache,
+      logger: services.logger,
+      context: services.context,
+      ref: node.ref,
+      title: `ER Diagram: ${qualifiedName(node.ref)}`,
+    });
   });
 
   register('dbclient.explorer.quickOpen', async () => {

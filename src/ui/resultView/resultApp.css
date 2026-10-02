@@ -5,8 +5,10 @@
  *    `public/theme/umyui.css` + `src/vue/result/view.css` + Toolbar /
  *    Row_Header components): compact toolbar (search 200px "Input To Search
  *    Data", Cost: Xms, small pager), two-line column header (name weight 500
- *    over a muted type line), index column green, striped rows, cells stay
- *    selectable, no ellipsis.
+ *    over a muted type line), striped rows, cells stay selectable, no
+ *    ellipsis. Rows and columns are the driver's own - no index column is
+ *    invented - and the column separator is umy-table's own `.plx-resizable`
+ *    handle, themed here rather than replaced.
  *  - **DBCode** (`dbcodeio/public` docs): summary chips for the connection /
  *    database context, statement result tabs with status marks and the grid
  *    right-click **Copy As** menu (Selection / All, one payload per format).
@@ -355,9 +357,18 @@ body {
 
 /* grid host + fade ------------------------------------------------------------ */
 .dd-grid-host {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+/* The host is the focusable region (Tab lands here, arrows move the keyboard
+   cursor). The ring must only show for keyboard focus - a mouse click parks
+   the cursor on a cell without painting a ring around the whole grid. */
+.dd-grid-host:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, var(--dd-focus));
+  outline-offset: -1px;
 }
 
 /* Executed statement band ---------------------------------------------------
@@ -522,10 +533,6 @@ ux-grid {
   user-select: text !important;
 }
 
-.col--index {
-  color: var(--dd-green);
-}
-
 .plx-table .plx-table--body-wrapper {
   background: var(--vscode-editor-background);
 }
@@ -643,39 +650,58 @@ ux-grid {
   padding: 4px 10px 4px 6px;
 }
 
-/* Manual column-resize handle: visible 1px separator, wider grab zone. */
-.dd-col-resize {
-  position: absolute;
-  top: 0;
-  right: -5px;
-  display: block;
-  width: 9px;
-  height: 100%;
-  padding: 0;
-  border: none;
-  background: transparent;
-  cursor: col-resize;
-  touch-action: none;
+/*
+ * Column resize: umy-table's own handle does the work. `.plx-resizable` is a
+ * real 14px grab zone the library renders on the right edge of every header
+ * cell whose column is `resizable` - it owns the drag, the floor (the column's
+ * own minimum width) and the position feedback (`.plx-table--resizable-bar`),
+ * and it suppresses sorting for 300ms after a drag. Nothing here moves a
+ * column; this block only paints the affordance.
+ *
+ * theme-chalk's separator would be drawn by a pseudo-element, which this
+ * stylesheet may never declare (there is a test), so the separator is a
+ * one-pixel vertical gradient on the real element instead.
+ */
+.plx-header--column .plx-resizable {
+  background-image: linear-gradient(
+    to right,
+    transparent calc(50% - 0.5px),
+    var(--dd-border) calc(50% - 0.5px),
+    var(--dd-border) calc(50% + 0.5px),
+    transparent calc(50% + 0.5px)
+  );
 }
 
-.dd-col-resize-line {
-  position: absolute;
-  top: 0;
-  right: 4px;
-  display: block;
-  width: 1px;
-  height: 100%;
-  background: var(--dd-border);
+.plx-header--column .plx-resizable:hover {
+  background-image: linear-gradient(
+    to right,
+    transparent calc(50% - 0.5px),
+    var(--dd-focus) calc(50% - 0.5px),
+    var(--dd-focus) calc(50% + 0.5px),
+    transparent calc(50% + 0.5px)
+  );
 }
 
-.dd-col-resize:hover .dd-col-resize-line {
-  background: var(--dd-focus);
-}
-
-.dd-resizing,
-.dd-resizing * {
+/*
+ * During a drag the library puts `c--resize` on the table root and removes it
+ * on mouseup: a pointer sweep across the rows must not select text, and the
+ * separator must stay painted. `user-select` on the library's own `!important`
+ * cell rule is matched and ordered after it, so the override holds.
+ */
+.plx-table.c--resize,
+.plx-table.c--resize * {
   cursor: col-resize !important;
   user-select: none !important;
+}
+
+.plx-table.c--resize .plx-header--column .plx-resizable {
+  background-image: linear-gradient(
+    to right,
+    transparent calc(50% - 0.5px),
+    var(--vscode-focusBorder) calc(50% - 0.5px),
+    var(--vscode-focusBorder) calc(50% + 0.5px),
+    transparent calc(50% + 0.5px)
+  );
 }
 
 .dd-col-name-row {
@@ -693,6 +719,40 @@ ux-grid {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+}
+
+/* Label half of the header row: the key marks and the name travel together so
+   the icon cannot end up stranded next to the filter button. */
+.dd-col-label {
+  display: flex;
+  align-items: center;
+  gap: var(--dd-space-1);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* Schema key marks: a drawn SVG whose hue comes from a token, never a glyph
+   and never a colour written into this file. The shape (key vs hashtag) is
+   what distinguishes the two, so a colour-blind reader loses nothing. */
+.dd-col-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  /* Optical alignment with the cap height of the label. */
+  margin-top: -1px;
+}
+
+.dd-col-mark .dd-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.dd-col-mark--primary {
+  color: var(--dd-key);
+}
+
+.dd-col-mark--foreign {
+  color: var(--dd-fk);
 }
 
 .dd-col-type {
@@ -771,6 +831,37 @@ ux-grid {
      high-contrast themes. */
   color: var(--dd-muted);
   font-style: italic;
+}
+
+/* Empty string: told apart from NULL (a word is shown) and from the four
+   letters "NULL" (plain text) by a faint tint as soon as the pointer rests on
+   the cell - an empty value still has a place in the table. */
+.dd-cell--empty:hover {
+  background: var(--vscode-editor-inactiveSelectionBackground, var(--dd-hover));
+}
+
+/*
+ * Keyboard cursor. It is deliberately not a row or a column selection: those
+ * belong to the checkbox scope and to the library's sort/selection state, and
+ * this must stay readable on top of either.
+ */
+.dd-cell.is-active {
+  box-shadow: inset 0 0 0 1px var(--vscode-focusBorder, var(--dd-focus));
+}
+
+/* Loading overlay while a table-mode request is in flight. The webview
+   document is replaced when the answer arrives, so this only has to be honest,
+   never animated into a spinner we do not own. */
+.dd-grid-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-descriptionForeground, var(--dd-muted));
+  font-size: 12px;
 }
 
 /* popovers ------------------------------------------------------------------- */
@@ -986,6 +1077,298 @@ ux-grid {
 .dd-filter-form select:focus,
 .dd-filter-form input:focus {
   border-color: var(--dd-focus);
+}
+
+/* Row editing -----------------------------------------------------------------
+   A cell being typed into keeps the same box, height and cursor id as the cell
+   it replaces; the NULL switch is a word rather than a glyph, and it is only
+   rendered for a column the schema says accepts NULL. */
+.dd-cell-editing {
+  padding: 0 var(--dd-space-1);
+  overflow: visible;
+}
+
+.dd-cell-input {
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  padding: 0 var(--dd-space-1);
+  border: 1px solid var(--dd-focus);
+  border-radius: var(--dd-radius);
+  background: var(--dd-input-bg);
+  color: var(--dd-input-fg);
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+/* Read-only while the host still holds the write: the text on screen keeps
+   describing exactly what was sent. */
+.dd-cell-input[readonly] {
+  opacity: 0.75;
+}
+
+.dd-cell-editing.is-null .dd-cell-input {
+  color: var(--dd-muted);
+  font-style: italic;
+}
+
+.dd-cell-null {
+  appearance: none;
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 var(--dd-space-1);
+  border: 1px solid var(--dd-border);
+  border-radius: var(--dd-radius);
+  background: transparent;
+  color: var(--dd-muted);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.dd-cell-null:hover {
+  color: var(--dd-fg);
+  background: var(--dd-hover);
+}
+
+.dd-cell-null.is-active {
+  color: var(--dd-red);
+  border-color: var(--dd-red);
+  background: var(--vscode-inputValidation-errorBackground, transparent);
+}
+
+.dd-cell-null:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Row actions column: one real button per row, only where editing is armed. */
+.dd-cell-action {
+  justify-content: center;
+  padding: 0;
+}
+
+.dd-row-delete {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--dd-icon-size);
+  height: var(--dd-icon-size);
+  padding: 0;
+  border: none;
+  border-radius: var(--dd-radius);
+  background: transparent;
+  color: var(--dd-muted);
+  cursor: pointer;
+}
+
+.dd-row-delete:hover {
+  color: var(--dd-red);
+  background: var(--vscode-inputValidation-errorBackground, var(--dd-hover));
+}
+
+.dd-row-delete:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dd-row-delete svg {
+  width: var(--dd-icon-size);
+  height: var(--dd-icon-size);
+}
+
+/* Write dialogs (delete confirmation, insert row) ----------------------------- */
+.dd-dialog-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--dd-space-4);
+}
+
+.dd-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.dd-dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dd-space-2);
+  width: min(400px, 100%);
+  max-height: calc(100vh - 32px);
+  padding: var(--dd-space-3);
+  background: var(--vscode-editorWidget-background, var(--dd-widget-bg));
+  border: 1px solid var(--vscode-widget-border, var(--dd-border));
+  border-radius: var(--dd-radius-lg);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+  color: var(--dd-fg);
+}
+
+.dd-dialog-insert {
+  width: min(520px, 100%);
+}
+
+.dd-dialog-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dd-dialog-text {
+  margin: 0;
+  color: var(--dd-muted);
+  line-height: 1.5;
+}
+
+.dd-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dd-space-1);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.dd-dialog-row {
+  display: flex;
+  align-items: center;
+  gap: var(--dd-space-2);
+}
+
+.dd-dialog-label {
+  display: flex;
+  flex: 0 0 140px;
+  flex-direction: column;
+  gap: var(--dd-space-1);
+  min-width: 0;
+}
+
+.dd-dialog-col {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dd-dialog-type {
+  font-size: 11px;
+  color: var(--dd-muted);
+}
+
+.dd-dialog-input {
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  padding: 0 var(--dd-space-1);
+  border: 1px solid var(--dd-input-border);
+  border-radius: var(--dd-radius);
+  background: var(--dd-input-bg);
+  color: var(--dd-input-fg);
+  font-family: var(--dd-mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.dd-dialog-input:focus {
+  border-color: var(--dd-focus);
+}
+
+.dd-dialog-input[readonly] {
+  color: var(--dd-muted);
+}
+
+.dd-dialog-spacer {
+  flex: 0 0 auto;
+  width: 44px;
+}
+
+.dd-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--dd-space-2);
+}
+
+.dd-dialog-actions .dd-btn-primary,
+.dd-dialog-actions .dd-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dd-space-1);
+  height: 24px;
+  padding: 0 var(--dd-space-3);
+}
+
+.dd-dialog-actions svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* The NULL switch of the insert form: a labelled button, never a glyph. */
+.dd-null-toggle {
+  appearance: none;
+  flex: 0 0 auto;
+  min-width: 44px;
+  height: 24px;
+  padding: 0 var(--dd-space-1);
+  border: 1px solid var(--dd-border);
+  border-radius: var(--dd-radius);
+  background: transparent;
+  color: var(--dd-muted);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.dd-null-toggle:hover {
+  color: var(--dd-fg);
+  background: var(--dd-hover);
+}
+
+.dd-null-toggle.is-active {
+  color: var(--dd-red);
+  border-color: var(--dd-red);
+  background: var(--vscode-inputValidation-errorBackground, transparent);
+}
+
+.dd-null-toggle:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* The destructive twin of the primary button. It reads as an error rather
+   than as a theme colour, so it stays legible in light and dark themes. */
+.dd-btn-danger {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dd-space-1);
+  height: 24px;
+  padding: 0 var(--dd-space-3);
+  border: 1px solid var(--vscode-inputValidation-errorBorder, var(--dd-error));
+  border-radius: 2px;
+  background: transparent;
+  color: var(--dd-error);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.dd-btn-danger:hover {
+  background: var(--vscode-inputValidation-errorBackground, var(--dd-hover));
+}
+
+.dd-btn-danger:disabled,
+.dd-btn-primary:disabled,
+.dd-btn-secondary:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 /* scrollbars (reference auto.css) -------------------------------------------- */

@@ -9,9 +9,19 @@ import {
   iconClose,
   iconCopy,
   iconDot,
+  iconEye,
+  iconEyeOff,
+  iconFit,
   iconFunnel,
+  iconHashtagMark,
+  iconKeyMark,
+  iconLayout,
+  iconMinus,
+  iconPlus,
   iconRefresh,
+  iconResetPositions,
   iconReveal,
+  iconSearch,
   iconStatusBusy,
   iconStatusError,
   iconStatusOk,
@@ -48,6 +58,15 @@ describe('engine marks', () => {
       assert.ok(!svg.includes('<!--'), `${key} has no comments`);
     }
   });
+
+  // The webview CSP is `style-src <cspSource> 'nonce-…'`: a nonce never
+  // covers style *attributes*, so the browser strips them and the mark
+  // paints with default (black) fill. Presentation attributes are immune.
+  it('declares no style attributes (CSP strips them; marks render black)', () => {
+    for (const [key, svg] of Object.entries(ENGINE_SVGS)) {
+      assert.ok(!/ style="/.test(svg), `${key} has no style attribute`);
+    }
+  });
 });
 
 describe('generic UI icons', () => {
@@ -67,6 +86,16 @@ describe('generic UI icons', () => {
     ['status ok', iconStatusOk()],
     ['status error', iconStatusError()],
     ['status busy', iconStatusBusy()],
+    ['primary key', iconKeyMark()],
+    ['foreign key', iconHashtagMark()],
+    ['search', iconSearch()],
+    ['zoom in', iconPlus()],
+    ['zoom out', iconMinus()],
+    ['fit', iconFit()],
+    ['auto layout', iconLayout()],
+    ['reset positions', iconResetPositions()],
+    ['show unrelated', iconEye()],
+    ['hide unrelated', iconEyeOff()],
   ];
 
   it('renders every icon as a self-contained inline svg', () => {
@@ -74,6 +103,44 @@ describe('generic UI icons', () => {
       assert.ok(svg.startsWith('<svg'), `${name} prefix`);
       assert.ok(svg.endsWith('</svg>'), `${name} suffix`);
       assert.ok(svg.includes('viewBox='), `${name} viewBox`);
+    }
+  });
+
+  it('draws the schema key marks instead of spelling a glyph', () => {
+    // A key and a hashtag are declared schema facts, so they are icons: no
+    // `#` character, no emoji, no private-use codepoint, and the hue comes
+    // from the stylesheet rather than being written into the markup.
+    for (const [name, svg] of [
+      ['primary key', iconKeyMark()],
+      ['foreign key', iconHashtagMark()],
+    ] as const) {
+      assert.ok(svg.includes('currentColor'), `${name} follows the token colour`);
+      assert.ok(!/#[0-9a-f]{3,8}\b/i.test(svg.replace('viewBox', '')), `${name} carries no literal colour`);
+      assert.ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{E000}-\u{F8FF}]/u.test(svg), `${name} has no glyph`);
+      assert.ok(!/<text/.test(svg), `${name} is not a text node`);
+      assert.ok(svg.includes('aria-hidden="true"'), `${name} is hidden from the tree`);
+    }
+    // The hashtag must not be the `#` character wearing an svg costume.
+    assert.ok(!iconHashtagMark().includes('#'), 'the foreign-key mark draws its bars');
+  });
+
+  it('draws the ER diagram toolbar icons instead of spelling glyphs', () => {
+    const toolbar: Array<[string, string]> = [
+      ['search', iconSearch()],
+      ['zoom in', iconPlus()],
+      ['zoom out', iconMinus()],
+      ['fit', iconFit()],
+      ['auto layout', iconLayout()],
+      ['reset positions', iconResetPositions()],
+      ['show unrelated', iconEye()],
+      ['hide unrelated', iconEyeOff()],
+    ];
+    for (const [name, svg] of toolbar) {
+      assert.ok(svg.includes('currentColor'), `${name} follows the token colour`);
+      assert.ok(!/#[0-9a-f]{3,8}\b/i.test(svg.replace('viewBox', '')), `${name} carries no literal colour`);
+      assert.ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{E000}-\u{F8FF}]/u.test(svg), `${name} has no glyph`);
+      assert.ok(!/<text/.test(svg), `${name} is not a text node`);
+      assert.ok(svg.includes('aria-hidden="true"'), `${name} is hidden from the tree`);
     }
   });
 });

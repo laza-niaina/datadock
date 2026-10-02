@@ -43,6 +43,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
+    "@types/dagre": "^0.7.54",
     "@types/mssql": "^12.3.0",
     "@types/node": "^22.10.0",
     "@types/pg": "^8.23.1",
@@ -238,6 +239,12 @@
         "title": "Refresh",
         "category": "DataDock",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "dbclient.erd.open",
+        "title": "Entity Relationship Diagram",
+        "category": "DataDock",
+        "icon": "$(list-tree)"
       }
     ],
     "menus": {
@@ -333,6 +340,11 @@
           "command": "dbclient.node.copyQualifiedName",
           "when": "view == dbclient.explorer && viewItem =~ /^dbclient\\.(table|view|column|routine)$/",
           "group": "2_copy@2"
+        },
+        {
+          "command": "dbclient.erd.open",
+          "when": "view == dbclient.explorer && viewItem == dbclient.folder.tables",
+          "group": "3_diagram@1"
         }
       ],
       "editor/context": [
@@ -425,6 +437,10 @@
           "when": "false"
         },
         {
+          "command": "dbclient.erd.open",
+          "when": "false"
+        },
+        {
           "command": "dbclient.query.execute",
           "when": "editorLangId == sql"
         },
@@ -505,6 +521,7 @@
   },
   "dependencies": {
     "babel-helper-vue-jsx-merge-props": "2.0.3",
+    "dagre": "^0.8.5",
     "mssql": "^12.7.2",
     "mysql2": "^3.24.4",
     "pg": "^8.23.0",

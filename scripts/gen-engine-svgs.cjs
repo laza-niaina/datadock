@@ -2,7 +2,18 @@
 /**
  * Regenerates the `ENGINE_SVGS` block in `src/ui/icons.ts` from the engine
  * mark files in `resources/icon/`, byte-exact, with XML declarations,
- * DOCTYPEs and comments stripped so the markup is safe to inline in webviews.
+ * DOCTYPEs, comments and inline `style` declarations stripped so the markup
+ * is safe to inline in webviews.
+ *
+ * `style=""` cannot ship at all: the webviews run under
+ * `style-src <cspSource> 'nonce-…'`, and a nonce never covers style
+ * *attributes*, so the browser strips them and the mark paints with default
+ * (black) fill. Every property the marks use is an SVG presentation
+ * attribute, so the declarations are rewritten to attributes - same
+ * rendering, no CSP violation. A property that is *not* a presentation
+ * attribute would keep its `style` (still stripped at runtime), so the
+ * whitelist below is the contract: extend it only together with a mark that
+ * needs it.
  *
  * Run after adding or touching an engine mark:
  *   node scripts/gen-engine-svgs.cjs
@@ -15,6 +26,48 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const iconDir = path.join(root, 'resources', 'icon');
 const target = path.join(root, 'src', 'ui', 'icons.ts');
+
+/**
+ * SVG presentation attributes: the only style declarations that may survive
+ * into `ENGINE_SVGS`, because they are plain attributes (CSP does not see
+ * them) and inherit exactly like the CSS property they mirror.
+ */
+const PRESENTATION_ATTRIBUTES = new Set([
+  'fill',
+  'fill-rule',
+  'clip-rule',
+  'opacity',
+  'stroke',
+  'stroke-width',
+  'stroke-linecap',
+  'stroke-linejoin',
+  'stroke-miterlimit',
+]);
+
+/** Rewrites `style="a:b;c:d"` into `a="b" c="d"`, keeping a style attribute
+ *  only for declarations with no presentation-attribute equivalent. */
+function inlineStylesToAttributes(markup) {
+  return markup.replace(/ style="([^"]*)"/g, (match, declarations) => {
+    const converted = [];
+    const kept = [];
+    for (const raw of declarations.split(';')) {
+      const declaration = raw.trim();
+      if (declaration === '') continue;
+      const colon = declaration.indexOf(':');
+      const property = (colon < 0 ? declaration : declaration.slice(0, colon)).trim().toLowerCase();
+      const value = (colon < 0 ? '' : declaration.slice(colon + 1)).trim();
+      const usable =
+        value !== '' &&
+        !/["<>]/.test(value) &&
+        PRESENTATION_ATTRIBUTES.has(property);
+      if (usable) converted.push(`${property}="${value}"`);
+      else kept.push(declaration);
+    }
+    if (converted.length === 0) return match;
+    const rest = kept.length > 0 ? ` style="${kept.join(';')}"` : '';
+    return ` ${converted.join(' ')}${rest}`;
+  });
+}
 
 /** engine key -> mark file (relative to resources/icon/). */
 const MARKS = [
@@ -34,6 +87,7 @@ for (const [key, file] of MARKS) {
     .replace(/^<!DOCTYPE[\s\S]*?>\s*/, '')
     .replace(/<!--[\s\S]*?-->/g, '')
     .trim();
+  content = inlineStylesToAttributes(content).trim();
   out[key] = content;
 }
 

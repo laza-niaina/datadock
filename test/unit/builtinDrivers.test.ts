@@ -86,10 +86,12 @@ describe('registerBuiltinDrivers', () => {
       multipleDatabases: false,
       views: true,
       routines: false,
-      editableData: false,
+      editableData: true,
       serverSidePagination: true,
       countRows: false,
-      transactions: false,
+      // sql.js runs BEGIN/COMMIT in the snapshot, and the file is only
+      // rewritten once the transaction has ended.
+      transactions: true,
       ssl: false,
       sshTunnel: false,
     };
@@ -100,7 +102,7 @@ describe('registerBuiltinDrivers', () => {
     assert.equal(mysql.multipleDatabases, true);
     assert.equal(mysql.views, true);
     assert.equal(mysql.routines, true);
-    assert.equal(mysql.editableData, false);
+    assert.equal(mysql.editableData, true);
     assert.equal(mysql.backupTool, 'mysqldump');
 
     const mariadb = registry.require('mariadb').capabilities;

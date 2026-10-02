@@ -66,3 +66,18 @@ export function connectionFormAssets(webview: vscode.Webview): { cssUri: string 
   const cssUri = root ? webview.asWebviewUri(vscode.Uri.joinPath(root, 'formApp.css')) : undefined;
   return { cssUri: cssUri ? cssUri.toString() : '' };
 }
+
+/**
+ * Assets of the entity relationship diagram webview: same bundle folder as the
+ * result view, own esbuild entry (`dist/webview/erdApp.js` + `erdApp.css`).
+ */
+export function erdViewAssets(webview: vscode.Webview): ResultViewAssets {
+  const root = webviewRootDir();
+  const jsUri = root ? webview.asWebviewUri(vscode.Uri.joinPath(root, 'erdApp.js')) : undefined;
+  const cssUri = root ? webview.asWebviewUri(vscode.Uri.joinPath(root, 'erdApp.css')) : undefined;
+  return {
+    jsUri: jsUri ? jsUri.toString() : '',
+    cssUri: cssUri ? cssUri.toString() : '',
+    cspSource: webview.cspSource,
+  };
+}

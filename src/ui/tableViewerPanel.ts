@@ -1,9 +1,10 @@
 /**
  * Paginated table viewer built on the shared DataDock result webview (the
  * reference "Result View" chain): toolbar with search, export, refresh, cost
- * and pager, typed sortable headers, per-column filters, green index column.
- * The webview is a Vue 2 + umy-table bundle shipped from dist/webview (see
- * resultHost.ts / renderDataGridPage).
+ * and pager, two-line sortable headers (name over SQL type), per-column
+ * filters, every column coming straight from the driver. The webview is a
+ * Vue 2 + umy-table bundle shipped from dist/webview (see resultHost.ts /
+ * renderDataGridPage).
  *
  * Unlike the query result grid (client-side filtering of one fetched batch),
  * the table viewer pushes filters, sort, search and paging down to the driver
@@ -11,13 +12,20 @@
  * webview only sends navigation intents; every page is fetched by the extension
  * host, credentials never cross the webview boundary and identifiers remain
  * validated by the data layer.
+ *
+ * When the page is writable (primary key + writable profile) the webview can
+ * also edit it: `update` / `delete` / `insert` messages carry a row index, a
+ * column name and a text value, and this host turns them into
+ * `RowChange`s keyed by the primary key. Every write echoes the revision of
+ * the document it came from, runs serially, and is answered by a repaint (on
+ * success) or a `write` message that leaves the editor open (on refusal).
  */
 
-import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import type { ConnectionManager } from '../connections/connectionManager';
 import { DbError } from '../db/errors';
 import type {
+  ColumnInfo,
   EngineId,
   Logger,
   TableDataPage,
@@ -27,9 +35,11 @@ import type {
   TableSort,
 } from '../db/types';
 import { globalRedactor } from '../util/redaction';
+import { isBinaryColumnType, parseEditValue, rowKeyOf } from '../db/rowEdit';
 import type { GridCell, GridColumn, GridExportFormat, GridFilter } from './dataGrid/dataGridModel';
 import { GRID_PAGE_SIZE, exportFileName, renderGridExport, serializeGridValue } from './dataGrid/dataGridModel';
-import { renderDataGridPage, escapeHtml, type GridViewGrid } from './dataGrid/dataGridView';
+import { renderDataGridPage, type GridViewGrid } from './dataGrid/dataGridView';
+import { toEditIntent, type EditIntent } from './rowEditMessages';
 import { compactGridSetting, writeCompactGridSetting } from './resultGridSettings';
 import { panelIconUri, resultViewAssets, resultViewWebviewOptions } from './resultView/resultHost';
 
@@ -48,7 +58,10 @@ type TableViewerMessage =
   | { type: 'apply'; search?: unknown; filters?: unknown; sort?: unknown }
   | { type: 'export'; format?: unknown; target?: unknown }
   | { type: 'copy'; text?: unknown }
-  | { type: 'setCompact'; compact?: unknown };
+  | { type: 'setCompact'; compact?: unknown }
+  | { type: 'update'; revision?: unknown; row?: unknown; column?: unknown; value?: unknown }
+  | { type: 'delete'; revision?: unknown; row?: unknown }
+  | { type: 'insert'; revision?: unknown; values?: unknown };
 
 const VALID_OPERATORS = new Set(['=', '!=', '<', '<=', '>', '>=', 'LIKE', 'NOT LIKE', 'IS NULL', 'IS NOT NULL']);
 
@@ -104,6 +117,15 @@ function toGridFilters(filters: readonly TableFilter[]): GridFilter[] {
   }));
 }
 
+/** Banner text for a completed insert, using the identity the driver reported. */
+function insertNotice(identity: Record<string, unknown>): string {
+  const keys = Object.keys(identity);
+  if (keys.length !== 1) {
+    return 'Row inserted.';
+  }
+  return `Row inserted. ${keys[0]} = ${String(identity[keys[0]])}.`;
+}
+
 function exportFiltersFor(format: GridExportFormat): Record<string, string[]> {
   switch (format) {
     case 'csv':
@@ -123,6 +145,15 @@ export class TableViewerPanel {
   private request: TableDataRequest = { offset: 0, limit: GRID_PAGE_SIZE, search: '' };
   private page?: TableDataPage;
   private error?: string;
+  /** Counts page requests: only the newest answer is allowed to repaint. */
+  private sequence = 0;
+  /** Echo token for writes: bumped on every repaint, sent back by the webview. */
+  private revision = 0;
+  /** Writes run one after another, so two edits never race on one page. */
+  private writes: Promise<void> = Promise.resolve();
+  /** Banner carried by the repaint a successful write triggers, then dropped. */
+  private writeNotice?: { kind: 'info' | 'error'; text: string };
+  private disposed = false;
 
   private constructor(
     private readonly panel: vscode.WebviewPanel,
@@ -161,7 +192,13 @@ export class TableViewerPanel {
     const value = message as TableViewerMessage;
     switch (value.type) {
       case 'ready':
-        await this.load();
+        // The document asks for content once, before the host ever painted
+        // it. Every later boot comes from an html assignment we made (a tab
+        // coming back, or an answer that already carries its data), so
+        // fetching here again would repaint the page forever.
+        if (this.page === undefined && this.error === undefined && !this.disposed) {
+          await this.load();
+        }
         return;
       case 'refresh':
         this.request = {
@@ -210,6 +247,15 @@ export class TableViewerPanel {
         }
         return;
       }
+      case 'update':
+      case 'delete':
+      case 'insert': {
+        const intent = toEditIntent(value);
+        if (intent) {
+          this.queueWrite(() => this.applyIntent(intent));
+        }
+        return;
+      }
       default:
         return;
     }
@@ -217,22 +263,170 @@ export class TableViewerPanel {
 
   /** Fetches the current page (server-side filters/sort) and repaints. */
   private async load(): Promise<void> {
+    const sequence = ++this.sequence;
+    let page: TableDataPage | undefined;
+    let error: string | undefined;
     try {
       const driver = this.options.manager.requireDriver(this.options.ref.connectionId);
-      this.page = await driver.getTableData(this.options.ref, this.request);
-      this.error = undefined;
-    } catch (error) {
-      this.page = undefined;
-      const dbError = DbError.from(error, 'QUERY_ERROR');
-      this.error = globalRedactor.redact(dbError.message);
+      page = await driver.getTableData(this.options.ref, this.request);
+    } catch (err) {
+      const dbError = DbError.from(err, 'QUERY_ERROR');
+      error = globalRedactor.redact(dbError.message);
       this.options.logger.error('Table viewer query failed.', { code: dbError.code });
     }
+    // Two requests can be in flight (a sort that fires while a page loads):
+    // the slower one is stale, and painting it would show data nobody asked
+    // for any more.
+    if (sequence !== this.sequence || this.disposed) {
+      return;
+    }
+    this.page = page;
+    this.error = error;
+    if (page !== undefined) {
+      // Every repaint makes the write token of the previous document stale.
+      this.revision += 1;
+    }
     this.panel.webview.html = this.render();
+    // The notice only rides along with the repaint that carries it.
+    this.writeNotice = undefined;
+  }
+
+  // --- row editing ------------------------------------------------------------
+
+  /** Writes run one at a time: the next one waits for the previous repaint. */
+  private queueWrite(work: () => Promise<void>): void {
+    this.writes = this.writes.then(work).catch((error: unknown) => {
+      const dbError = DbError.from(error, 'QUERY_ERROR');
+      this.options.logger.error('Table row write failed.', { code: dbError.code });
+    });
+  }
+
+  /**
+   * The gate every write passes: the page must still be the one the message
+   * came from (revision), and it must be writable at all (primary key plus a
+   * profile that allows writes).
+   */
+  private gate(revision: number): { page: TableDataPage } | { error: string } {
+    if (revision !== this.revision) {
+      return { error: 'This view is out of date: refresh the table and try the edit again.' };
+    }
+    const page = this.page;
+    if (!page) {
+      return { error: 'The table data has not loaded yet.' };
+    }
+    if (!page.editable || page.primaryKey.length === 0) {
+      return {
+        error: 'This relation cannot be edited: it needs a primary key, and the connection must allow writes.',
+      };
+    }
+    return { page };
+  }
+
+  private requireColumn(page: TableDataPage, name: string): ColumnInfo {
+    const column = page.columns.find((candidate) => candidate.name === name);
+    if (!column) {
+      throw new DbError('CONFIG_ERROR', `Column '${name}' does not exist in this relation.`);
+    }
+    if (isBinaryColumnType(column.dataType)) {
+      throw new DbError(
+        'CONFIG_ERROR',
+        `Column '${column.name}' stores binary data, which cannot be edited as text.`,
+      );
+    }
+    return column;
+  }
+
+  /** Turns webview text into typed bind values, schema-checked one by one. */
+  private requireValues(
+    page: TableDataPage,
+    values: Record<string, string | number | null>,
+  ): Record<string, unknown> {
+    const typed: Record<string, unknown> = {};
+    for (const [name, raw] of Object.entries(values)) {
+      const column = this.requireColumn(page, name);
+      typed[name] = parseEditValue(column, raw);
+    }
+    return typed;
+  }
+
+  private async applyIntent(intent: EditIntent): Promise<void> {
+    const gate = this.gate(intent.revision);
+    if ('error' in gate) {
+      this.postWriteError(new DbError('CONFIG_ERROR', gate.error));
+      return;
+    }
+    const page = gate.page;
+    try {
+      const driver = this.options.manager.requireDriver(this.options.ref.connectionId);
+      if (intent.kind === 'update') {
+        if (!driver.updateRows) {
+          throw new DbError('UNSUPPORTED_OPERATION', 'This engine does not support updating rows.');
+        }
+        const column = this.requireColumn(page, intent.column);
+        const key = rowKeyOf(page, intent.row);
+        const typed = parseEditValue(column, intent.value);
+        const affected = await driver.updateRows(this.options.ref, [
+          { key, values: { [column.name]: typed } },
+        ]);
+        // Affected rows counts changed rows on MySQL, so "0" also means the
+        // value was already there; the wording covers both readings.
+        await this.writeDone(
+          affected > 0 ? 'Row updated.' : 'No change was written: the row may have been modified elsewhere.',
+        );
+        return;
+      }
+      if (intent.kind === 'delete') {
+        if (!driver.deleteRows) {
+          throw new DbError('UNSUPPORTED_OPERATION', 'This engine does not support deleting rows.');
+        }
+        const key = rowKeyOf(page, intent.row);
+        const affected = await driver.deleteRows(this.options.ref, [key]);
+        await this.writeDone(
+          affected > 0 ? 'Row deleted.' : 'No row matched: it may already have been deleted.',
+        );
+        return;
+      }
+      if (!driver.insertRow) {
+        throw new DbError('UNSUPPORTED_OPERATION', 'This engine does not support inserting rows.');
+      }
+      const values = this.requireValues(page, intent.values);
+      if (Object.keys(values).length === 0) {
+        throw new DbError('CONFIG_ERROR', 'Nothing to insert: every column is left to its default.');
+      }
+      const identity = await driver.insertRow(this.options.ref, values);
+      await this.writeDone(insertNotice(identity));
+    } catch (error) {
+      this.postWriteError(error);
+    }
+  }
+
+  /** Repaints with a banner that says what the write actually did. */
+  private async writeDone(text: string): Promise<void> {
+    this.writeNotice = { kind: 'info', text };
+    await this.load();
+  }
+
+  /** Answers a refused write without repainting, so the editor keeps its text. */
+  private postWriteError(error: unknown): void {
+    const dbError = DbError.from(error, 'QUERY_ERROR');
+    const message = globalRedactor.redact(dbError.message);
+    this.options.logger.error('Table row write refused.', { code: dbError.code });
+    void this.panel.webview.postMessage({ type: 'write', ok: false, message });
   }
 
   private grid(): GridViewGrid {
     const page = this.page;
-    const columns: GridColumn[] = (page?.columns ?? []).map((column) => ({ name: column.name, type: column.dataType }));
+    const columns: GridColumn[] = (page?.columns ?? []).map((column) => ({
+      name: column.name,
+      type: column.dataType,
+      primaryKey: column.isPrimaryKey,
+      foreignKey: column.isForeignKey,
+      // Only what the insert form and the cell editor need to be honest about
+      // NULL, defaults and columns no text box can round-trip.
+      nullable: column.nullable || undefined,
+      autoIncrement: column.isAutoIncrement || undefined,
+      editable: isBinaryColumnType(column.dataType) ? false : undefined,
+    }));
     const rows: GridCell[][] = (page?.rows ?? []).map((row) => row.map((value) => serializeGridValue(value)));
     return {
       id: 'table',
@@ -241,6 +435,9 @@ export class TableViewerPanel {
       rows,
       label: this.options.ref.table,
       status: this.error !== undefined ? 'error' : 'ok',
+      // A failed page keeps the toolbar, the pager and the banner - the
+      // message belongs above the grid, not instead of it.
+      error: this.error,
     };
   }
 
@@ -256,18 +453,6 @@ export class TableViewerPanel {
   }
 
   private render(): string {
-    if (this.error !== undefined && !this.page) {
-      const nonce = randomBytes(16).toString('base64');
-      const csp = [
-        "default-src 'none'",
-        `style-src 'nonce-${nonce}'`,
-        `script-src 'nonce-${nonce}'`,
-        "font-src 'none'",
-        "base-uri 'none'",
-        "form-action 'none'",
-      ].join('; ');
-      return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta http-equiv="Content-Security-Policy" content="${csp}" /><title>DataDock Table</title></head><body><h1>${escapeHtml(this.options.title)}</h1><p class="error">${escapeHtml(this.error)}</p></body></html>`;
-    }
     const view = {
       mode: 'table' as const,
       grids: [this.grid()],
@@ -282,6 +467,11 @@ export class TableViewerPanel {
       totalRows: this.page?.totalRows,
       cost: `Page size ${this.request.limit}`,
       compact: compactGridSetting(),
+      // Row editing: the token every write echoes back, the flag that arms the
+      // editors, and the banner a successful write repaints with.
+      revision: this.revision,
+      editable: Boolean(this.page?.editable && (this.page?.primaryKey.length ?? 0) > 0),
+      writeNotice: this.writeNotice,
     };
     return renderDataGridPage(resultViewAssets(this.panel.webview), view, this.options.title);
   }
@@ -318,6 +508,7 @@ export class TableViewerPanel {
   }
 
   dispose(): void {
+    this.disposed = true;
     TableViewerPanel.open.delete(this.key);
   }
 }

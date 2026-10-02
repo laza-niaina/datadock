@@ -79,6 +79,15 @@ export interface DataGridViewOptions {
   readonly query?: QueryBatchMeta;
   /** Persisted density preference: `true` renders the compact row set. */
   readonly compact?: boolean;
+  /**
+   * Echo token for write intents. The host bumps it on every repaint, so a
+   * message from a document that has already been replaced is refused.
+   */
+  readonly revision?: number;
+  /** Row editing is available on this page (writable profile + primary key). */
+  readonly editable?: boolean;
+  /** One-time banner carried across a write-triggered repaint. */
+  readonly writeNotice?: { readonly kind: 'info' | 'error'; readonly text: string };
 }
 
 /** URLs consumed by the page shell, resolved by resultHost.resultViewAssets. */

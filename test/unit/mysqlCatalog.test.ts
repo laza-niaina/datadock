@@ -8,6 +8,8 @@ import {
   toBool,
   toColumnInfos,
   toDatabaseNames,
+  toForeignKeyInfos,
+  toRelationColumns,
   toRoutineInfos,
   toTableInfos,
 } from '../../src/db/drivers/mysql/mysqlCatalog';
@@ -124,6 +126,7 @@ describe('isAutoIncrementColumn / toColumnInfos', () => {
       dataType: 'bigint(20) unsigned',
       nullable: false,
       isPrimaryKey: true,
+      isForeignKey: false,
       isAutoIncrement: true,
       defaultValue: null,
       comment: 'identifier',
@@ -134,11 +137,20 @@ describe('isAutoIncrementColumn / toColumnInfos', () => {
       dataType: 'varchar(255)',
       nullable: true,
       isPrimaryKey: false,
+      isForeignKey: false,
       isAutoIncrement: false,
       defaultValue: 'unknown',
       comment: undefined,
       ordinal: 1,
     });
+  });
+
+  it('marks a column taking part in a foreign key', () => {
+    const [column] = toColumnInfos([
+      { columnName: 'org_id', dataType: 'int', isNullable: 'YES', isPrimaryKey: 0, isForeignKey: 1, ordinal: 4, extra: '' },
+    ]);
+    assert.equal(column.isForeignKey, true);
+    assert.equal(column.isPrimaryKey, false);
   });
 
   it('falls back to DATA_TYPE and to the row index for a missing ordinal', () => {
@@ -169,6 +181,71 @@ describe('toRoutineInfos', () => {
   });
 });
 
+describe('toForeignKeyInfos / toRelationColumns', () => {
+  const row = {
+    constraintName: 'fk_orders_user',
+    sourceSchema: 'shop',
+    sourceTable: 'orders',
+    sourceColumn: 'user_id',
+    targetSchema: 'shop',
+    targetTable: 'users',
+    targetColumn: 'id',
+    ordinal: 1,
+  };
+
+  it('maps both ends of a constraint without inventing anything', () => {
+    assert.deepEqual(toForeignKeyInfos([row]), [
+      {
+        name: 'fk_orders_user',
+        sourceSchema: 'shop',
+        sourceTable: 'orders',
+        sourceColumn: 'user_id',
+        targetSchema: 'shop',
+        targetTable: 'users',
+        targetColumn: 'id',
+        ordinal: 1,
+      },
+    ]);
+  });
+
+  it('drops rows without a referenced table and repairs a broken ordinal', () => {
+    const keys = toForeignKeyInfos([
+      { ...row, targetTable: undefined, targetColumn: undefined },
+      { ...row, ordinal: 'nope' },
+    ]);
+    assert.equal(keys.length, 1);
+    assert.equal(keys[0].ordinal, 1);
+  });
+
+  it('keeps composite siblings apart through their ordinal', () => {
+    const keys = toForeignKeyInfos([
+      { ...row, sourceColumn: 'a', targetColumn: 'x', ordinal: 1 },
+      { ...row, sourceColumn: 'b', targetColumn: 'y', ordinal: 2 },
+    ]);
+    assert.deepEqual(keys.map((key) => [key.sourceColumn, key.ordinal]), [
+      ['a', 1],
+      ['b', 2],
+    ]);
+  });
+
+  it('groups schema-wide column rows per relation, preserving first-seen order', () => {
+    const relations = toRelationColumns([
+      { tableName: 'orders', columnName: 'id', dataType: 'bigint', isNullable: 'NO', ordinal: 1, isPrimaryKey: 1, isForeignKey: 0, extra: 'auto_increment' },
+      { tableName: 'orders', columnName: 'user_id', dataType: 'bigint', isNullable: 'NO', ordinal: 2, isPrimaryKey: 0, isForeignKey: 1, extra: '' },
+      { tableName: 'users', columnName: 'id', dataType: 'bigint', isNullable: 'NO', ordinal: 1, isPrimaryKey: 1, isForeignKey: 0, extra: 'auto_increment' },
+      { columnName: 'orphan' },
+    ]);
+    assert.deepEqual(relations.map((relation) => relation.table), ['orders', 'users']);
+    assert.deepEqual(
+      relations[0].columns.map((column) => [column.name, column.isPrimaryKey, column.isForeignKey]),
+      [
+        ['id', true, false],
+        ['user_id', false, true],
+      ],
+    );
+  });
+});
+
 describe('MYSQL_SQL contract', () => {
   it('declares the documented parameter counts', () => {
     const placeholders = (sql: string): number => (sql.match(/\?/g) ?? []).length;
@@ -176,6 +253,9 @@ describe('MYSQL_SQL contract', () => {
     assert.equal(placeholders(MYSQL_SQL.tables), 1);
     assert.equal(placeholders(MYSQL_SQL.columns), 2);
     assert.equal(placeholders(MYSQL_SQL.routines), 1);
+    // ER diagram: both queries are catalog-wide, never per table.
+    assert.equal(placeholders(MYSQL_SQL.schemaColumns), 1);
+    assert.equal(placeholders(MYSQL_SQL.foreignKeys), 1);
   });
 
   it('queries the information_schema views the mappers expect', () => {
@@ -185,5 +265,9 @@ describe('MYSQL_SQL contract', () => {
     assert.match(MYSQL_SQL.columns, /KEY_COLUMN_USAGE/);
     assert.match(MYSQL_SQL.columns, /CONSTRAINT_NAME = 'PRIMARY'/);
     assert.match(MYSQL_SQL.routines, /information_schema\.ROUTINES/);
+    assert.match(MYSQL_SQL.schemaColumns, /AS tableName/);
+    assert.match(MYSQL_SQL.schemaColumns, /CONSTRAINT_NAME = 'PRIMARY'/);
+    assert.match(MYSQL_SQL.foreignKeys, /REFERENCED_TABLE_NAME IS NOT NULL/);
+    assert.doesNotMatch(MYSQL_SQL.foreignKeys, /TABLE_NAME = \?/);
   });
 });

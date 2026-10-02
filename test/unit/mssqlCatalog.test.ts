@@ -10,6 +10,8 @@ import {
   toBool,
   toColumnInfos,
   toDatabaseNames,
+  toForeignKeyInfos,
+  toRelationColumns,
   toRoutineInfos,
   toTableInfos,
 } from '../../src/db/drivers/mssql/mssqlCatalog';
@@ -128,6 +130,7 @@ describe('toColumnInfos', () => {
         dataType: 'int',
         nullable: false,
         isPrimaryKey: true,
+        isForeignKey: false,
         isAutoIncrement: true,
         defaultValue: null,
         ordinal: 1,
@@ -137,11 +140,20 @@ describe('toColumnInfos', () => {
         dataType: 'nvarchar(max)',
         nullable: true,
         isPrimaryKey: false,
+        isForeignKey: false,
         isAutoIncrement: false,
         defaultValue: 'N\'x\'',
         ordinal: 2,
       },
     ]);
+  });
+
+  it('marks a column taking part in a foreign key', () => {
+    const [column] = toColumnInfos([
+      { columnName: 'customer_id', dataType: 'int', isNullable: 'YES', isPrimaryKey: 0, isForeignKey: 1, isIdentity: '0', ordinal: 2 },
+    ]);
+    assert.equal(column.isForeignKey, true);
+    assert.equal(column.isPrimaryKey, false);
   });
 
   it('falls back to the array position when the ordinal is missing', () => {
@@ -172,6 +184,52 @@ describe('quoteMssqlIdentifier', () => {
   });
 });
 
+describe('toForeignKeyInfos / toRelationColumns', () => {
+  const row = {
+    constraintName: 'FK_orders_user',
+    sourceSchema: 'dbo',
+    sourceTable: 'orders',
+    sourceColumn: 'user_id',
+    targetSchema: 'dbo',
+    targetTable: 'users',
+    targetColumn: 'id',
+    ordinal: 1,
+  };
+
+  it('maps both ends of a constraint and drops incomplete rows', () => {
+    assert.deepEqual(toForeignKeyInfos([row]), [
+      {
+        name: 'FK_orders_user',
+        sourceSchema: 'dbo',
+        sourceTable: 'orders',
+        sourceColumn: 'user_id',
+        targetSchema: 'dbo',
+        targetTable: 'users',
+        targetColumn: 'id',
+        ordinal: 1,
+      },
+    ]);
+    assert.deepEqual(toForeignKeyInfos([{ ...row, sourceTable: null }]), []);
+  });
+
+  it('groups schema-wide column rows per relation', () => {
+    const relations = toRelationColumns([
+      { tableName: 'orders', columnName: 'id', dataType: 'bigint', isNullable: 'NO', isIdentity: 0, ordinal: 1, isPrimaryKey: 1, isForeignKey: 0 },
+      { tableName: 'orders', columnName: 'user_id', dataType: 'bigint', isNullable: 'NO', isIdentity: 0, ordinal: 2, isPrimaryKey: 0, isForeignKey: 1 },
+      { tableName: 'users', columnName: 'id', dataType: 'bigint', isNullable: 'NO', isIdentity: 0, ordinal: 1, isPrimaryKey: 1, isForeignKey: 0 },
+      { columnName: 'orphan' },
+    ]);
+    assert.deepEqual(relations.map((relation) => relation.table), ['orders', 'users']);
+    assert.deepEqual(
+      relations[0].columns.map((column) => [column.name, column.isPrimaryKey, column.isForeignKey]),
+      [
+        ['id', true, false],
+        ['user_id', false, true],
+      ],
+    );
+  });
+});
+
 describe('MSSQL_SQL statements', () => {
   it('keeps parameter counts in sync with the driver call sites', () => {
     // `@pN` may repeat inside a batch (each statement re-binds it), so count
@@ -184,6 +242,16 @@ describe('MSSQL_SQL statements', () => {
     // a third parameter here throws at runtime, not at test time.
     assert.equal(distinctParams(MSSQL_SQL.columns), 2);
     assert.equal(distinctParams(MSSQL_SQL.routines), 1);
+    // ER diagram: both queries are catalog-wide, never per table.
+    assert.equal(distinctParams(MSSQL_SQL.schemaColumns), 1);
+    assert.equal(distinctParams(MSSQL_SQL.foreignKeys), 1);
+  });
+
+  it('builds the ER diagram statements schema-wide', () => {
+    assert.match(MSSQL_SQL.schemaColumns, /AS tableName/);
+    assert.match(MSSQL_SQL.schemaColumns, /OBJECT_ID\(QUOTENAME/);
+    assert.match(MSSQL_SQL.foreignKeys, /sys\.foreign_key_columns/);
+    assert.doesNotMatch(MSSQL_SQL.foreignKeys, /TABLE_NAME = @p2/);
   });
 
   it('filters system databases and fixed roles outside the query', () => {

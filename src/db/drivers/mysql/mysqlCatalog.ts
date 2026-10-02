@@ -13,7 +13,7 @@
  */
 
 import { DbError } from '../../errors';
-import type { ColumnInfo, RoutineInfo, SchemaRef, TableInfo } from '../../types';
+import type { ColumnInfo, ForeignKeyInfo, RelationColumns, RoutineInfo, SchemaRef, TableInfo } from '../../types';
 
 export interface MysqlRow {
   readonly [column: string]: unknown;
@@ -48,21 +48,79 @@ export const MYSQL_SQL = {
            c.COLUMN_COMMENT    AS comment,
            c.ORDINAL_POSITION  AS ordinal,
            c.EXTRA             AS extra,
-           IF(k.COLUMN_NAME IS NULL, 0, 1) AS isPrimaryKey
+           IF(k.COLUMN_NAME IS NULL, 0, 1) AS isPrimaryKey,
+           IF(fk.COLUMN_NAME IS NULL, 0, 1) AS isForeignKey
       FROM information_schema.COLUMNS c
       LEFT JOIN information_schema.KEY_COLUMN_USAGE k
              ON k.TABLE_SCHEMA    = c.TABLE_SCHEMA
             AND k.TABLE_NAME      = c.TABLE_NAME
             AND k.COLUMN_NAME     = c.COLUMN_NAME
             AND k.CONSTRAINT_NAME = 'PRIMARY'
+      LEFT JOIN (
+        SELECT DISTINCT kcu.TABLE_SCHEMA, kcu.TABLE_NAME, kcu.COLUMN_NAME
+          FROM information_schema.KEY_COLUMN_USAGE kcu
+         WHERE kcu.REFERENCED_TABLE_NAME IS NOT NULL
+      ) fk
+             ON fk.TABLE_SCHEMA = c.TABLE_SCHEMA
+            AND fk.TABLE_NAME   = c.TABLE_NAME
+            AND fk.COLUMN_NAME  = c.COLUMN_NAME
      WHERE c.TABLE_SCHEMA = ? AND c.TABLE_NAME = ?
      ORDER BY c.ORDINAL_POSITION`,
+  /**
+   * 1 parameter: schema. The same columns as `columns` for **every** relation
+   * of the schema at once, so the ER diagram never issues one query per table.
+   */
+  schemaColumns: `
+    SELECT c.TABLE_NAME        AS tableName,
+           c.COLUMN_NAME       AS columnName,
+           c.COLUMN_TYPE       AS columnType,
+           c.DATA_TYPE         AS dataType,
+           c.IS_NULLABLE       AS isNullable,
+           c.COLUMN_DEFAULT    AS columnDefault,
+           c.COLUMN_COMMENT    AS comment,
+           c.ORDINAL_POSITION  AS ordinal,
+           c.EXTRA             AS extra,
+           IF(k.COLUMN_NAME IS NULL, 0, 1) AS isPrimaryKey,
+           IF(fk.COLUMN_NAME IS NULL, 0, 1) AS isForeignKey
+      FROM information_schema.COLUMNS c
+      LEFT JOIN information_schema.KEY_COLUMN_USAGE k
+             ON k.TABLE_SCHEMA    = c.TABLE_SCHEMA
+            AND k.TABLE_NAME      = c.TABLE_NAME
+            AND k.COLUMN_NAME     = c.COLUMN_NAME
+            AND k.CONSTRAINT_NAME = 'PRIMARY'
+      LEFT JOIN (
+        SELECT DISTINCT kcu.TABLE_SCHEMA, kcu.TABLE_NAME, kcu.COLUMN_NAME
+          FROM information_schema.KEY_COLUMN_USAGE kcu
+         WHERE kcu.REFERENCED_TABLE_NAME IS NOT NULL
+      ) fk
+             ON fk.TABLE_SCHEMA = c.TABLE_SCHEMA
+            AND fk.TABLE_NAME   = c.TABLE_NAME
+            AND fk.COLUMN_NAME  = c.COLUMN_NAME
+     WHERE c.TABLE_SCHEMA = ?
+     ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION`,
   /** 1 parameter: schema. */
   routines: `
     SELECT r.ROUTINE_NAME AS routineName, r.ROUTINE_TYPE AS routineType
       FROM information_schema.ROUTINES r
      WHERE r.ROUTINE_SCHEMA = ?
      ORDER BY r.ROUTINE_NAME`,
+  /**
+   * 1 parameter: schema. One catalog-wide pass returns both ends of every
+   * foreign key of the schema - never one query per table.
+   */
+  foreignKeys: `
+    SELECT kcu.CONSTRAINT_NAME       AS constraintName,
+           kcu.TABLE_SCHEMA          AS sourceSchema,
+           kcu.TABLE_NAME            AS sourceTable,
+           kcu.COLUMN_NAME           AS sourceColumn,
+           kcu.REFERENCED_TABLE_SCHEMA AS targetSchema,
+           kcu.REFERENCED_TABLE_NAME   AS targetTable,
+           kcu.REFERENCED_COLUMN_NAME  AS targetColumn,
+           kcu.ORDINAL_POSITION      AS ordinal
+      FROM information_schema.KEY_COLUMN_USAGE kcu
+     WHERE kcu.TABLE_SCHEMA = ?
+       AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
+     ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION`,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -181,6 +239,7 @@ export function toColumnInfos(rows: readonly MysqlRow[]): ColumnInfo[] {
       dataType: text(row['columnType']) ?? text(row['dataType']) ?? 'UNKNOWN',
       nullable: toNullable(row['isNullable']),
       isPrimaryKey: toBool(row['isPrimaryKey']),
+      isForeignKey: toBool(row['isForeignKey']),
       isAutoIncrement: isAutoIncrementColumn(row['extra']),
       defaultValue:
         row['columnDefault'] === undefined
@@ -193,6 +252,69 @@ export function toColumnInfos(rows: readonly MysqlRow[]): ColumnInfo[] {
     });
   });
   return columns;
+}
+
+// ---------------------------------------------------------------------------
+// Schema-wide columns (ER diagram)
+// ---------------------------------------------------------------------------
+
+/**
+ * Groups `schemaColumns` rows into one entry per relation.
+ *
+ * The query orders by `TABLE_NAME` first, but grouping by name (not by
+ * contiguity) keeps the mapper correct even if the engine reorders rows.
+ */
+export function toRelationColumns(rows: readonly MysqlRow[]): RelationColumns[] {
+  const groups = new Map<string, MysqlRow[]>();
+  const order: string[] = [];
+  for (const row of rows) {
+    const table = text(row['tableName']);
+    if (table === undefined) {
+      continue;
+    }
+    let bucket = groups.get(table);
+    if (bucket === undefined) {
+      bucket = [];
+      groups.set(table, bucket);
+      order.push(table);
+    }
+    bucket.push(row);
+  }
+  return order.map((table) => ({ table, columns: toColumnInfos(groups.get(table) ?? []) }));
+}
+
+// ---------------------------------------------------------------------------
+// Foreign keys (ER diagram)
+// ---------------------------------------------------------------------------
+
+/**
+ * Maps the catalog-wide `foreignKeys` rows into `ForeignKeyInfo`.
+ *
+ * Rows with no referenced table (self-describing key usage) are dropped, which
+ * is what makes this query safe to run over a whole schema.
+ */
+export function toForeignKeyInfos(rows: readonly MysqlRow[]): ForeignKeyInfo[] {
+  const keys: ForeignKeyInfo[] = [];
+  for (const row of rows) {
+    const sourceTable = text(row['sourceTable']);
+    const sourceColumn = text(row['sourceColumn']);
+    const targetTable = text(row['targetTable']);
+    if (sourceTable === undefined || sourceColumn === undefined || targetTable === undefined) {
+      continue;
+    }
+    const ordinalRaw = Number(row['ordinal']);
+    keys.push({
+      name: text(row['constraintName']),
+      sourceSchema: text(row['sourceSchema']),
+      sourceTable,
+      sourceColumn,
+      targetSchema: text(row['targetSchema']),
+      targetTable,
+      targetColumn: text(row['targetColumn']),
+      ordinal: Number.isFinite(ordinalRaw) && ordinalRaw > 0 ? ordinalRaw : keys.length + 1,
+    });
+  }
+  return keys;
 }
 
 // ---------------------------------------------------------------------------

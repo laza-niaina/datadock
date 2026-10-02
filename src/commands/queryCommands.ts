@@ -18,7 +18,7 @@
 import { basename } from 'node:path';
 import * as vscode from 'vscode';
 import { DbError } from '../db/errors';
-import type { ConnectionProfile, DatabaseDriver, QueryExecutionResult } from '../db/types';
+import type { ConnectionProfile, DatabaseDriver, QueryExecutionResult, TableRef } from '../db/types';
 import { RelationNode } from '../explorer/nodes';
 import {
   clearHistoryEntries,
@@ -37,6 +37,8 @@ import {
 import { sqlFileAssociations, type SqlFileAssociation } from '../sql/sqlFileState';
 import { splitSqlStatements, statementAtOffset, type SqlStatement } from '../sql/sqlStatements';
 import { selectStatementFor } from '../sql/queryTemplate';
+import type { ColumnKeyFlags, ColumnKeyMap } from '../ui/dataGrid/dataGridModel';
+import { tableFromStatement } from '../ui/dataGrid/dataGridView';
 import { QueryResultPanel, type QueryStatementDisplay } from '../ui/queryResultPanel';
 import { TableViewerPanel } from '../ui/tableViewerPanel';
 import { globalRedactor } from '../util/redaction';
@@ -337,6 +339,95 @@ export async function revealSqlRange(uri: vscode.Uri, start: number, end: number
  * `selectDatabase`, never rendered as a statement) so unqualified names resolve
  * against the chosen database without an artificial `USE` in the results.
  */
+/** Schema namespaces a connection can hold a relation in, most specific first. */
+function schemaCandidates(profile: ConnectionProfile, database: string | undefined): (string | undefined)[] {
+  const candidates: (string | undefined)[] = [];
+  const push = (value: string | undefined): void => {
+    const trimmed = value?.trim();
+    if (trimmed !== undefined && trimmed !== '' && !candidates.includes(trimmed)) {
+      candidates.push(trimmed);
+    }
+  };
+  push(profile.schema);
+  // MySQL and SQLite share one namespace per connection, so the database *is*
+  // the schema there; PostgreSQL and SQL Server keep them apart.
+  push(database);
+  if (profile.engine === 'postgresql') {
+    push('public');
+  } else if (profile.engine === 'mssql') {
+    push('dbo');
+  }
+  if (candidates.length === 0) {
+    candidates.push(undefined);
+  }
+  return candidates;
+}
+
+/**
+ * Resolves the primary/foreign key flags of every relation a result set reads.
+ *
+ * `QueryResultSet.fields` carries only a name and a type, so a query grid has
+ * no idea whether `id` is a key. The marks therefore come from a catalog
+ * lookup keyed by the table `tableFromStatement` extracts, and every failure is
+ * swallowed: a run that already succeeded must never be failed by an optional
+ * decoration, and a relation that cannot be located simply stays unmarked.
+ */
+async function resolveColumnKeys(
+  target: QueryTarget,
+  database: string | undefined,
+  displays: readonly QueryStatementDisplay[],
+): Promise<ColumnKeyMap> {
+  const tables = new Set<string>();
+  for (const display of displays) {
+    if (display.results.length === 0) {
+      continue;
+    }
+    const table = tableFromStatement(display.text);
+    if (table !== '') {
+      tables.add(table);
+    }
+  }
+  if (tables.size === 0) {
+    return {};
+  }
+  const candidates = schemaCandidates(target.profile, database);
+  const resolved = await Promise.all(
+    [...tables].map(async (table): Promise<readonly [string, Readonly<Record<string, ColumnKeyFlags>>] | undefined> => {
+      for (const schema of candidates) {
+        const ref: TableRef = {
+          connectionId: target.profile.id,
+          database: database ?? target.profile.database ?? '',
+          schema,
+          table,
+          kind: 'table',
+        };
+        let columns;
+        try {
+          columns = await target.driver.listColumns(ref);
+        } catch {
+          continue; // Wrong namespace or no metadata for this engine.
+        }
+        if (columns.length === 0) {
+          continue;
+        }
+        const flags: Record<string, ColumnKeyFlags> = {};
+        for (const column of columns) {
+          flags[column.name] = { primaryKey: column.isPrimaryKey, foreignKey: column.isForeignKey };
+        }
+        return [table, flags] as const;
+      }
+      return undefined;
+    }),
+  );
+  const map: Record<string, Readonly<Record<string, ColumnKeyFlags>>> = {};
+  for (const entry of resolved) {
+    if (entry !== undefined) {
+      map[entry[0]] = entry[1];
+    }
+  }
+  return map;
+}
+
 async function runStatements(
   services: CommandServices,
   target: QueryTarget,
@@ -436,6 +527,9 @@ async function runStatements(
       const durationMs = Date.now() - started;
       const hasError = displays.some((display) => display.error !== undefined);
       recordBatchHistory(services, target, effectiveDatabase, displays);
+      // Key marks are decoration: resolution failures leave the grids unmarked
+      // instead of failing a batch that already ran to completion.
+      const columnKeys = await resolveColumnKeys(target, effectiveDatabase, displays);
       QueryResultPanel.show(
         {
           key: `sql:${uri.toString()}`,
@@ -447,6 +541,7 @@ async function runStatements(
           notices: [],
           statements: displays,
           hasError,
+          columnKeys,
         },
         (start, end) => void revealSqlRange(uri, start, end),
       );

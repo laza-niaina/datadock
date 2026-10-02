@@ -12,7 +12,7 @@
  */
 
 import { DbError } from '../../errors';
-import type { ColumnInfo, RoutineInfo, SchemaRef, TableInfo } from '../../types';
+import type { ColumnInfo, ForeignKeyInfo, RelationColumns, RoutineInfo, SchemaRef, TableInfo } from '../../types';
 
 export interface PostgresRow {
   readonly [column: string]: unknown;
@@ -57,7 +57,8 @@ export const PG_SQL = {
            COALESCE(pg_catalog.pg_get_expr(d.adbin, d.adrelid), '') AS columnDefault,
            a.attnum                                        AS ordinal,
            CASE WHEN a.attidentity <> '' THEN 'YES' ELSE 'NO' END AS isIdentity,
-           CASE WHEN pk.attnum IS NULL THEN 0 ELSE 1 END   AS isPrimaryKey
+           CASE WHEN pk.attnum IS NULL THEN 0 ELSE 1 END   AS isPrimaryKey,
+           CASE WHEN fk.attname IS NULL THEN 0 ELSE 1 END  AS isForeignKey
       FROM pg_catalog.pg_attribute a
       JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -68,6 +69,14 @@ export const PG_SQL = {
           JOIN pg_catalog.pg_attribute u ON u.attrelid = i.indrelid AND u.attnum = ANY(i.indkey)
          WHERE i.indisprimary
       ) pk ON pk.indrelid = a.attrelid AND pk.attnum = a.attnum
+      LEFT JOIN (
+        SELECT con.conrelid, u.attname
+          FROM pg_catalog.pg_constraint con
+          JOIN pg_catalog.pg_attribute u
+            ON u.attrelid = con.conrelid
+           AND u.attnum   = ANY (con.conkey)
+         WHERE con.contype = 'f'
+      ) fk ON fk.conrelid = a.attrelid AND fk.attname = a.attname
      WHERE n.nspname = $1
        AND c.relname = $2
        AND a.attnum > 0
@@ -86,6 +95,72 @@ export const PG_SQL = {
       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = $1
      ORDER BY p.proname`,
+  /**
+   * 1 parameter: schema (namespace). One pass over `pg_constraint` yields both
+   * ends of every foreign key of the schema; `unnest(conkey, confkey)` pairs
+   * the referencing and referenced column arrays by position, which is exactly
+   * how PostgreSQL stores composite keys. No per-table query.
+   */
+  foreignKeys: `
+    SELECT con.conname                    AS constraintName,
+           ns.nspname                     AS sourceSchema,
+           src.relname                    AS sourceTable,
+           sa.attname                     AS sourceColumn,
+           tn.nspname                     AS targetSchema,
+           tgt.relname                    AS targetTable,
+           ta.attname                     AS targetColumn,
+           f.ord                          AS ordinal
+      FROM pg_catalog.pg_constraint con
+      JOIN pg_catalog.pg_class     src ON src.oid = con.conrelid
+      JOIN pg_catalog.pg_namespace ns  ON ns.oid  = src.relnamespace
+      JOIN pg_catalog.pg_class     tgt ON tgt.oid = con.confrelid
+      JOIN pg_catalog.pg_namespace tn  ON tn.oid  = tgt.relnamespace
+      JOIN unnest(con.conkey, con.confkey) WITH ORDINALITY AS f(attnum, cattnum, ord) ON TRUE
+      JOIN pg_catalog.pg_attribute sa
+            ON sa.attrelid = con.conrelid AND sa.attnum = f.attnum AND NOT sa.attisdropped
+      LEFT JOIN pg_catalog.pg_attribute ta
+            ON ta.attrelid = con.confrelid AND ta.attnum = f.cattnum
+     WHERE con.contype = 'f'
+       AND ns.nspname = $1
+     ORDER BY con.conname, f.ord`,
+  /**
+   * 1 parameter: schema (namespace). The same columns as `columns` for
+   * **every** relation of the schema at once, so the ER diagram never issues
+   * one query per table.
+   */
+  schemaColumns: `
+    SELECT c.relname                                      AS tableName,
+           a.attname                                      AS columnName,
+           pg_catalog.format_type(a.atttypid, a.atttypmod) AS dataType,
+           CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END AS isNullable,
+           COALESCE(pg_catalog.pg_get_expr(d.adbin, d.adrelid), '') AS columnDefault,
+           a.attnum                                       AS ordinal,
+           CASE WHEN a.attidentity <> '' THEN 'YES' ELSE 'NO' END AS isIdentity,
+           CASE WHEN pk.attnum IS NULL THEN 0 ELSE 1 END   AS isPrimaryKey,
+           CASE WHEN fk.attname IS NULL THEN 0 ELSE 1 END  AS isForeignKey
+      FROM pg_catalog.pg_attribute a
+      JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+      LEFT JOIN (
+        SELECT i.indrelid, u.attnum
+          FROM pg_catalog.pg_index i
+          JOIN pg_catalog.pg_attribute u ON u.attrelid = i.indrelid AND u.attnum = ANY(i.indkey)
+         WHERE i.indisprimary
+      ) pk ON pk.indrelid = a.attrelid AND pk.attnum = a.attnum
+      LEFT JOIN (
+        SELECT con.conrelid, u.attname
+          FROM pg_catalog.pg_constraint con
+          JOIN pg_catalog.pg_attribute u
+            ON u.attrelid = con.conrelid
+           AND u.attnum   = ANY (con.conkey)
+         WHERE con.contype = 'f'
+      ) fk ON fk.conrelid = a.attrelid AND fk.attname = a.attname
+     WHERE n.nspname = $1
+       AND a.attnum > 0
+       AND NOT a.attisdropped
+       AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+     ORDER BY c.relname, a.attnum`,
 } as const;
 
 /** Databases created by the server (`template0`, `template1`) plus the system maintenance DB. */
@@ -163,6 +238,7 @@ export function toColumnInfos(rows: readonly PostgresRow[]): ColumnInfo[] {
       dataType: String(row['dataType'] ?? ''),
       nullable: !toBool(row['isNullable'] === 'NO'),
       isPrimaryKey: toBool(row['isPrimaryKey']),
+      isForeignKey: toBool(row['isForeignKey']),
       isAutoIncrement:
         toBool(row['isIdentity'] === 'YES') || (defaultExpr !== null && /^nextval\(/i.test(defaultExpr)),
       defaultValue: defaultExpr,
@@ -195,6 +271,63 @@ export function toRoutineInfos(rows: readonly PostgresRow[]): RoutineInfo[] {
       routineType,
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Schema-wide columns (ER diagram)
+// ---------------------------------------------------------------------------
+
+/**
+ * Groups `schemaColumns` rows into one entry per relation.
+ *
+ * Grouping by name (not by contiguity) keeps the mapper correct even if the
+ * engine reorders rows.
+ */
+export function toRelationColumns(rows: readonly PostgresRow[]): RelationColumns[] {
+  const groups = new Map<string, PostgresRow[]>();
+  const order: string[] = [];
+  for (const row of rows) {
+    const table = String(row['tableName'] ?? '');
+    if (table === '') {
+      continue;
+    }
+    let bucket = groups.get(table);
+    if (bucket === undefined) {
+      bucket = [];
+      groups.set(table, bucket);
+      order.push(table);
+    }
+    bucket.push(row);
+  }
+  return order.map((table) => ({ table, columns: toColumnInfos(groups.get(table) ?? []) }));
+}
+
+// ---------------------------------------------------------------------------
+// Foreign keys (ER diagram)
+// ---------------------------------------------------------------------------
+
+/** Maps the catalog-wide `foreignKeys` rows into `ForeignKeyInfo`. */
+export function toForeignKeyInfos(rows: readonly PostgresRow[]): ForeignKeyInfo[] {
+  const keys: ForeignKeyInfo[] = [];
+  for (const row of rows) {
+    const sourceTable = toNullableString(row['sourceTable']);
+    const sourceColumn = toNullableString(row['sourceColumn']);
+    const targetTable = toNullableString(row['targetTable']);
+    if (sourceTable === null || sourceColumn === null || targetTable === null) {
+      continue;
+    }
+    keys.push({
+      name: toNullableString(row['constraintName']) ?? undefined,
+      sourceSchema: toNullableString(row['sourceSchema']) ?? undefined,
+      sourceTable,
+      sourceColumn,
+      targetSchema: toNullableString(row['targetSchema']) ?? undefined,
+      targetTable,
+      targetColumn: toNullableString(row['targetColumn']) ?? undefined,
+      ordinal: toOrdinal(row['ordinal'], keys.length),
+    });
+  }
+  return keys;
 }
 
 // ---------------------------------------------------------------------------

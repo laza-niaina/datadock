@@ -1,9 +1,10 @@
 /**
  * SQL Server driver on top of `mssql` (tedious).
  *
- * Scope of this milestone: connect, execute SQL, browse metadata, and read
- * table data. Row editing and schema mutations through the table viewer stay
- * disabled until their own persistence/identity milestone.
+ * Scope of this milestone: connect, execute SQL, browse metadata, read table
+ * data and write rows back through `updateRows` / `insertRow` / `deleteRows`
+ * (primary-key identity, `@p1..@pN` parameters, `OUTPUT INSERTED` for the
+ * inserted identity, refused on a read-only profile).
  *
  * Cancellation maps to `Request.cancel()`, and results discriminate SELECT
  * statements by the presence of recordset column metadata: an empty `recordset`
@@ -22,11 +23,14 @@ import type {
   DatabaseDriver,
   DriverCapabilities,
   EngineId,
+  ForeignKeyInfo,
   Logger,
   QueryExecutionResult,
   QueryField,
   QueryResultSet,
+  RelationColumns,
   RoutineInfo,
+  RowChange,
   SchemaRef,
   TableDataPage,
   TableDataRequest,
@@ -42,11 +46,21 @@ import {
   quoteMssqlIdentifier,
   toColumnInfos,
   toDatabaseNames,
+  toForeignKeyInfos,
+  toRelationColumns,
   toRoutineInfos,
   toTableInfos,
   type MssqlRow,
 } from './mssqlCatalog';
 import { buildTableCountSql, buildTableDataSql, type TableDataSqlOptions } from '../tableDataQuery';
+import { primaryKeyOf } from '../../rowEdit';
+import {
+  buildDeleteSql,
+  buildInsertSql,
+  buildUpdateSql,
+  deleteKeyChunks,
+  type RowEditSqlOptions,
+} from '../rowEditSql';
 import { buildMssqlConnectionOptions } from './mssqlConnectionOptions';
 import { toMssqlError } from './mssqlErrors';
 
@@ -58,7 +72,9 @@ export const MSSQL_CAPABILITIES: DriverCapabilities = {
   multipleDatabases: true,
   views: true,
   routines: true,
-  editableData: false,
+  // Row edits go through `updateRows`/`insertRow`/`deleteRows`, addressed by
+  // the primary key and refused on a read-only profile.
+  editableData: true,
   serverSidePagination: true,
   // SQL Server has no cheap row-count: `COUNT(*)` reads the whole index, so
   // like MySQL/PostgreSQL it is never issued automatically.
@@ -260,6 +276,16 @@ export class MssqlDriver implements DatabaseDriver {
     return toRoutineInfos(rows);
   }
 
+  async listForeignKeys(ref: SchemaRef, token?: CancelToken): Promise<ForeignKeyInfo[]> {
+    const rows = await this.query(MSSQL_SQL.foreignKeys, [mssqlScope(ref)], token);
+    return toForeignKeyInfos(rows);
+  }
+
+  async listSchemaColumns(ref: SchemaRef, token?: CancelToken): Promise<RelationColumns[]> {
+    const rows = await this.query(MSSQL_SQL.schemaColumns, [mssqlScope(ref)], token);
+    return toRelationColumns(rows);
+  }
+
   // -- query execution and table data ---------------------------------------
 
   async execute(sql: string, token: CancelToken = NEVER_CANCELLED): Promise<QueryExecutionResult> {
@@ -323,7 +349,87 @@ export class MssqlDriver implements DatabaseDriver {
     };
   }
 
+  // -- row editing ------------------------------------------------------------
+
+  async updateRows(
+    ref: TableRef,
+    changes: RowChange[],
+    token: CancelToken = NEVER_CANCELLED,
+  ): Promise<number> {
+    if (changes.length === 0) {
+      return 0;
+    }
+    this.requireWritable();
+    const columns = await this.listColumns(ref, token);
+    const options = this.rowEditOptions(ref, columns);
+    let affected = 0;
+    for (const change of changes) {
+      const built = buildUpdateSql(options, change);
+      affected += await this.affectedRows(built.sql, built.params, token);
+    }
+    return affected;
+  }
+
+  async insertRow(
+    ref: TableRef,
+    values: Record<string, unknown>,
+    token: CancelToken = NEVER_CANCELLED,
+  ): Promise<Record<string, unknown>> {
+    this.requireWritable();
+    const columns = await this.listColumns(ref, token);
+    const built = buildInsertSql(this.rowEditOptions(ref, columns), values);
+    const result = await this.runQuery(built.sql, built.params, token, 'QUERY_ERROR');
+    const row = Array.isArray(result.recordset) ? result.recordset[0] : undefined;
+    return row && typeof row === 'object' ? { ...(row as Record<string, unknown>) } : {};
+  }
+
+  async deleteRows(
+    ref: TableRef,
+    keys: Record<string, unknown>[],
+    token: CancelToken = NEVER_CANCELLED,
+  ): Promise<number> {
+    if (keys.length === 0) {
+      return 0;
+    }
+    this.requireWritable();
+    const columns = await this.listColumns(ref, token);
+    const options = this.rowEditOptions(ref, columns);
+    let affected = 0;
+    for (const chunk of deleteKeyChunks(keys)) {
+      const built = buildDeleteSql(options, chunk);
+      affected += await this.affectedRows(built.sql, built.params, token);
+    }
+    return affected;
+  }
+
   // -- internals -------------------------------------------------------------
+
+  /** The profile flag that keeps every write off a read-only connection. */
+  private requireWritable(): void {
+    if (this.config.profile.readOnly) {
+      throw new DbError('PERMISSION_DENIED', 'This connection is marked read-only; the row was not written.');
+    }
+  }
+
+  private rowEditOptions(ref: TableRef, columns: readonly ColumnInfo[]): RowEditSqlOptions {
+    const scope = mssqlScope(ref);
+    return {
+      table: `${quoteMssqlIdentifier(scope)}.${quoteMssqlIdentifier(ref.table)}`,
+      columns,
+      primaryKey: primaryKeyOf(columns),
+      quoteIdentifier: quoteMssqlIdentifier,
+      placeholder: (index) => `@p${index}`,
+      // `OUTPUT INSERTED.<pk>` returns the identity of the row just written.
+      insertOutput: (key) => `OUTPUT ${key.map((name) => `INSERTED.${name}`).join(', ')}`,
+    };
+  }
+
+  private async affectedRows(sql: string, params: readonly unknown[], token?: CancelToken): Promise<number> {
+    const result = await this.runQuery(sql, params, token, 'QUERY_ERROR');
+    const rows = Array.isArray(result.rowsAffected) ? result.rowsAffected : [];
+    const affected = rows.reduce((total, value) => total + (Number(value) || 0), 0);
+    return Number.isFinite(affected) ? affected : 0;
+  }
 
   private requireConnection(): ConnectionPool {
     if (!this.connection) {

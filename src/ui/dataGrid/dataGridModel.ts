@@ -18,7 +18,26 @@ export interface GridColumn {
   readonly name: string;
   /** Driver-reported type shown under the column name (e.g. `int`, `varchar(255)`). */
   readonly type?: string;
+  /** Column is declared PRIMARY KEY on the relation that produced the grid. */
+  readonly primaryKey?: boolean;
+  /** Column is declared FOREIGN KEY on the relation that produced the grid. */
+  readonly foreignKey?: boolean;
+  /** Column accepts NULL in the schema, so an editor may write one. */
+  readonly nullable?: boolean;
+  /** Column is filled in by the engine on insert (identity/serial). */
+  readonly autoIncrement?: boolean;
+  /** `false` when no editor can round-trip this column (binary values). */
+  readonly editable?: boolean;
 }
+
+/** Key flags resolved host-side for one schema column. */
+export interface ColumnKeyFlags {
+  readonly primaryKey: boolean;
+  readonly foreignKey: boolean;
+}
+
+/** `table` → `column name` → key flags, resolved before the webview boots. */
+export type ColumnKeyMap = Readonly<Record<string, Readonly<Record<string, ColumnKeyFlags>>>>;
 
 /** One active filter rule (mirrors the data layer's `TableFilter` shape). */
 export interface GridFilter {

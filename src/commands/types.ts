@@ -6,6 +6,7 @@
  * They must therefore tolerate `undefined` and fall back to a QuickPick.
  */
 
+import * as vscode from 'vscode';
 import type { ConnectionManager } from '../connections/connectionManager';
 import type { ConnectionStore } from '../connections/connectionStore';
 import type { DriverRegistry } from '../db/driverRegistry';
@@ -20,6 +21,8 @@ export interface CommandServices {
   readonly cache: MetadataCache;
   readonly logger: Logger;
   readonly provider: DatabaseExplorerProvider;
+  /** Extension context, for the panels that persist state (ER diagram positions). */
+  readonly context: vscode.ExtensionContext;
   /** Reveals the output channel. */
   showOutput(): void;
   /** Expands and focuses a connection node in the explorer. */

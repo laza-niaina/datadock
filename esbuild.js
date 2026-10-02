@@ -109,8 +109,31 @@ const formStylesOptions = {
   loader: { '.woff': 'file', '.woff2': 'file', '.ttf': 'file' },
 };
 
+/**
+ * Webview bundle of the entity relationship diagram, compiled by the fourth
+ * esbuild entry into `dist/webview/erdApp.js`. Plain TypeScript + SVG (no Vue,
+ * no table library) over the strict-CSP page shell in `renderErPage`; the
+ * stylesheet it imports is emitted beside it as `dist/webview/erdApp.css`. The
+ * layout engine (dagre) is bundled here so a re-layout never leaves the
+ * webview.
+ */
+/** @type {import('esbuild').BuildOptions} */
+const erdOptions = {
+  entryPoints: ['src/ui/erd/erdApp.ts'],
+  outfile: 'dist/webview/erdApp.js',
+  bundle: true,
+  format: 'iife',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: production ? false : 'inline',
+  minify: production,
+  keepNames: true,
+  logLevel: 'info',
+  metafile: production,
+};
+
 async function main() {
-  const entries = [options, webviewOptions, formStylesOptions];
+  const entries = [options, webviewOptions, formStylesOptions, erdOptions];
 
   if (watch) {
     const ctxs = await Promise.all(entries.map((entry) => esbuild.context(entry)));

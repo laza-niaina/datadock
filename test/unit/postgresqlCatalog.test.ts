@@ -9,6 +9,8 @@ import {
   toBool,
   toColumnInfos,
   toDatabaseNames,
+  toForeignKeyInfos,
+  toRelationColumns,
   toRoutineInfos,
   toTableInfos,
 } from '../../src/db/drivers/postgresql/postgresqlCatalog';
@@ -126,6 +128,7 @@ describe('toColumnInfos', () => {
         dataType: 'bigint',
         nullable: false,
         isPrimaryKey: true,
+        isForeignKey: false,
         isAutoIncrement: true, // nextval() default
         defaultValue: 'nextval(\'users_id_seq\'::regclass)',
         ordinal: 1,
@@ -135,11 +138,20 @@ describe('toColumnInfos', () => {
         dataType: 'character varying',
         nullable: true,
         isPrimaryKey: false,
+        isForeignKey: false,
         isAutoIncrement: true, // identity column
         defaultValue: null,
         ordinal: 2,
       },
     ]);
+  });
+
+  it('marks a column taking part in a foreign key', () => {
+    const [column] = toColumnInfos([
+      { columnName: 'org_id', dataType: 'integer', isNullable: 'YES', isPrimaryKey: 0, isForeignKey: 1, isIdentity: '' },
+    ]);
+    assert.equal(column.isForeignKey, true);
+    assert.equal(column.isPrimaryKey, false);
   });
 
   it('falls back to the array position when the ordinal is missing', () => {
@@ -170,6 +182,52 @@ describe('quotePostgresIdentifier', () => {
   });
 });
 
+describe('toForeignKeyInfos / toRelationColumns', () => {
+  const row = {
+    constraintName: 'orders_user_id_fkey',
+    sourceSchema: 'shop',
+    sourceTable: 'orders',
+    sourceColumn: 'user_id',
+    targetSchema: 'shop',
+    targetTable: 'users',
+    targetColumn: 'id',
+    ordinal: 1,
+  };
+
+  it('maps both ends of a constraint and drops incomplete rows', () => {
+    assert.deepEqual(toForeignKeyInfos([row]), [
+      {
+        name: 'orders_user_id_fkey',
+        sourceSchema: 'shop',
+        sourceTable: 'orders',
+        sourceColumn: 'user_id',
+        targetSchema: 'shop',
+        targetTable: 'users',
+        targetColumn: 'id',
+        ordinal: 1,
+      },
+    ]);
+    assert.deepEqual(toForeignKeyInfos([{ ...row, targetTable: null, targetColumn: null }]), []);
+  });
+
+  it('groups schema-wide column rows per relation', () => {
+    const relations = toRelationColumns([
+      { tableName: 'orders', columnName: 'id', dataType: 'bigint', isNullable: 'NO', columnDefault: '', ordinal: 1, isIdentity: 'NO', isPrimaryKey: 1, isForeignKey: 0 },
+      { tableName: 'orders', columnName: 'user_id', dataType: 'bigint', isNullable: 'NO', columnDefault: '', ordinal: 2, isIdentity: 'NO', isPrimaryKey: 0, isForeignKey: 1 },
+      { tableName: 'users', columnName: 'id', dataType: 'bigint', isNullable: 'NO', columnDefault: '', ordinal: 1, isIdentity: 'NO', isPrimaryKey: 1, isForeignKey: 0 },
+      { columnName: 'orphan' },
+    ]);
+    assert.deepEqual(relations.map((relation) => relation.table), ['orders', 'users']);
+    assert.deepEqual(
+      relations[0].columns.map((column) => [column.name, column.isPrimaryKey, column.isForeignKey]),
+      [
+        ['id', true, false],
+        ['user_id', false, true],
+      ],
+    );
+  });
+});
+
 describe('PG_SQL statements', () => {
   it('keeps parameter counts in sync with the driver call sites', () => {
     assert.equal(PG_SQL.databases.match(/\$\d+/g)?.length ?? 0, 0);
@@ -177,6 +235,12 @@ describe('PG_SQL statements', () => {
     assert.equal(PG_SQL.tables.match(/\$\d+/g)?.length ?? 0, 1);
     assert.equal(PG_SQL.columns.match(/\$\d+/g)?.length ?? 0, 2);
     assert.equal(PG_SQL.routines.match(/\$\d+/g)?.length ?? 0, 1);
+    // ER diagram: both queries are catalog-wide, never per table.
+    assert.equal(PG_SQL.schemaColumns.match(/\$\d+/g)?.length ?? 0, 1);
+    assert.equal(PG_SQL.foreignKeys.match(/\$\d+/g)?.length ?? 0, 1);
+    assert.match(PG_SQL.schemaColumns, /AS tableName/);
+    assert.match(PG_SQL.foreignKeys, /contype = 'f'/);
+    assert.doesNotMatch(PG_SQL.foreignKeys, /relname = /);
   });
 
   it('filters template databases and pg_% namespaces at the source and in the mapper', () => {
