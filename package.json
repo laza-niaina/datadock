@@ -1,5 +1,5 @@
 {
-  "name": "database-client-free",
+  "name": "datadock",
   "displayName": "DataDock",
   "description": "DataDock: a free database tooling extension for VS Code to explore MySQL, MariaDB, SQLite, PostgreSQL and SQL Server databases. No account, no telemetry and no connection limit.",
   "version": "0.1.0",
